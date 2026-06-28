@@ -1,0 +1,4 @@
+#!/usr/bin/env bun
+import { runEggoBoldLabImp } from "./imp-eggo-bold-lab.assets/runtime.ts";
+
+runEggoBoldLabImp();
