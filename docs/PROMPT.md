@@ -4,6 +4,28 @@ Copy this prompt into any AI agent (Claude, Codex, ChatGPT) to generate a new im
 
 ---
 
+## Reference implementation
+
+Before creating or migrating an imp, read `imps/imp-prompt-standard`.
+That file is the canonical executable reference for prompt structure. It shows:
+
+- what belongs in `baseInstructions`
+- what belongs in `developerInstructions`
+- how to document trust boundaries
+- how to write command maps, mutation policy, examples, error recovery, and output rules
+- how much inline TypeScript commentary future imps should include when they are meant to teach a pattern
+
+Use `docs/PROMPT.md` as the copy-paste generator guide. Use
+`imps/imp-prompt-standard` as the source-of-truth reference implementation.
+
+New and migrated imps should prefer this section order:
+
+Mission -> Tool-output trust boundary -> Operating rule -> Command map ->
+Workflow -> Mutation policy -> Worked examples -> Error recovery ->
+Command rules -> Output
+
+---
+
 ## The Prompt
 
 ```
@@ -13,7 +35,7 @@ that wraps a specific CLI tool. The imp should:
 1. Be a single executable TypeScript file with #!/usr/bin/env bun shebang
 2. Import { runImp } from "../lib/isolated.ts"
 3. Follow the "imp-" naming convention (e.g. imp-docker, imp-kubectl)
-4. Use the Oracle-tuned prompt structure: Operating rule → Command map → Workflow → Command rules → Output
+4. Use the Oracle-tuned prompt structure: Mission → Tool-output trust boundary → Operating rule → Command map → Workflow → Mutation policy → Worked examples → Error recovery → Command rules → Output
 
 Here's the template:
 
