@@ -8,15 +8,18 @@
  *   imps evolve [name]            pending evolution suggestions
  *   imps doctor                   environment sanity checks
  */
-import { existsSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { spawn, spawnSync } from "child_process";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
 import {
   evolutionFilePath,
+  evolutionTriggerPath,
   pendingEvolutionCount,
+  queueDir,
   readEvolutionSuggestions,
   readEvolutionTrigger,
+  statusFilePath,
   updateEvolutionSuggestionState,
 } from "./lib/evolution.ts";
 
@@ -83,17 +86,42 @@ async function cmdStop(target?: string): Promise<void> {
   if (stopped === 0) console.log(target === "--all" ? "no warm imps to stop" : `${target} is not warm`);
 }
 
+function writeJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+function listQueueFiles(): string[] {
+  const dir = queueDir();
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).sort();
+}
+
+function readStatusJson(name: string): unknown {
+  try {
+    return JSON.parse(readFileSync(statusFilePath(name), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function cmdEvolve(name?: string, args: string[] = []): void {
+  const json = args.includes("--json");
+  const debug = args.includes("--debug");
+
   if (!name) {
-    let any = false;
+    const rows = [];
     for (const imp of roster()) {
       const count = pendingEvolutionCount(imp);
       if (count > 0) {
-        console.log(`${imp.padEnd(24)}${count} pending evolution${count === 1 ? "" : "s"}   (${evolutionFilePath(imp)})`);
-        any = true;
+        rows.push({ imp, pending: count, evolution_file: evolutionFilePath(imp) });
       }
     }
-    if (!any) console.log("no pending imp evolutions");
+    if (json) {
+      writeJson({ imps: rows });
+      return;
+    }
+    if (rows.length === 0) console.log("no pending imp evolutions");
+    else for (const row of rows) console.log(`${row.imp.padEnd(24)}${row.pending} pending evolution${row.pending === 1 ? "" : "s"}   (${row.evolution_file})`);
     return;
   }
 
@@ -108,19 +136,77 @@ function cmdEvolve(name?: string, args: string[] = []): void {
       process.exit(1);
     }
     const changed = updateEvolutionSuggestionState(name, ids, state);
+    if (json) {
+      writeJson({ imp: name, state, changed });
+      return;
+    }
     console.log(`${name}: marked ${changed} evolution suggestion${changed === 1 ? "" : "s"} ${state}`);
     return;
   }
 
   const suggestions = readEvolutionSuggestions(name).filter((s) => s.state === "pending");
+  const trigger = readEvolutionTrigger(name);
+
+  if (debug) {
+    const queueFiles = listQueueFiles();
+    const failedJobs = queueFiles.filter((file) => file.includes(".failed"));
+    const runningJobs = queueFiles.filter((file) => file.includes(".running-"));
+    const pendingJobs = queueFiles.filter((file) => file.endsWith(".json"));
+    const payload = {
+      imp: name,
+      pending: suggestions.length,
+      evolution_file: evolutionFilePath(name),
+      status_file: statusFilePath(name),
+      trigger_file: evolutionTriggerPath(name),
+      trigger: trigger ?? null,
+      status: readStatusJson(name),
+      queue_dir: queueDir(),
+      queue: {
+        pending_jobs: pendingJobs,
+        running_jobs: runningJobs,
+        failed_jobs: failedJobs,
+      },
+      env: {
+        IMP_HOME: process.env.IMP_HOME || null,
+        IMP_EVOLUTION_DISABLED: process.env.IMP_EVOLUTION_DISABLED || null,
+        IMP_EVOLUTION_INLINE: process.env.IMP_EVOLUTION_INLINE || null,
+      },
+    };
+    if (json) {
+      writeJson(payload);
+      return;
+    }
+    console.log(`${name}: evolution debug`);
+    console.log(`  pending: ${suggestions.length}`);
+    console.log(`  evolution file: ${payload.evolution_file}`);
+    console.log(`  status file: ${payload.status_file}`);
+    console.log(`  trigger file: ${payload.trigger_file}${trigger ? " (present)" : " (absent)"}`);
+    console.log(`  queue dir: ${payload.queue_dir}`);
+    console.log(`  queue: ${pendingJobs.length} pending, ${runningJobs.length} running, ${failedJobs.length} failed`);
+    console.log(`  env: IMP_HOME=${payload.env.IMP_HOME ?? ""} IMP_EVOLUTION_DISABLED=${payload.env.IMP_EVOLUTION_DISABLED ?? ""} IMP_EVOLUTION_INLINE=${payload.env.IMP_EVOLUTION_INLINE ?? ""}`);
+    return;
+  }
+
   if (suggestions.length === 0) {
+    if (json) {
+      writeJson({ imp: name, pending: [], evolution_file: evolutionFilePath(name), trigger: null });
+      return;
+    }
     console.log(`${name} has no pending evolutions (${evolutionFilePath(name)})`);
     return;
   }
-  const trigger = readEvolutionTrigger(name);
+  if (json) {
+    writeJson({
+      imp: name,
+      pending: suggestions,
+      evolution_file: evolutionFilePath(name),
+      trigger: trigger ?? null,
+    });
+    return;
+  }
   console.log(`${name}: ${suggestions.length} pending evolution${suggestions.length === 1 ? "" : "s"} in ${evolutionFilePath(name)}\n`);
   if (trigger) {
-    console.log(`  auto-trigger: ${trigger.reason}`);
+    console.log(`  review trigger: ${trigger.reason}`);
     console.log(`      review command: ${trigger.command}`);
     console.log("");
   }
@@ -128,9 +214,15 @@ function cmdEvolve(name?: string, args: string[] = []): void {
     console.log(`  ${s.id}  ${s.created_at}  score ${s.score}/${s.benchmark}  ${s.severity}`);
     console.log(`      ${s.recommendation}`);
     if (s.evidence.length > 0) console.log(`      evidence: ${s.evidence[0]}`);
+    if (s.event_log_path) console.log(`      session log: ${s.event_log_path}`);
+    if (s.thread_id || s.turn_id) {
+      console.log(`      source: ${[s.thread_id ? `thread ${s.thread_id}` : "", s.turn_id ? `turn ${s.turn_id}` : ""].filter(Boolean).join(", ")}`);
+    }
   }
   console.log(`\nAfter making any prompt/code change, mark reviewed items: imps evolve ${name} --applied <id|all>`);
   console.log(`To discard noise: imps evolve ${name} --dismiss <id|all>`);
+  console.log(`For machine-readable output: imps evolve ${name} --json`);
+  console.log(`For queue/status debugging: imps evolve ${name} --debug`);
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -208,6 +300,8 @@ Usage:
   imps evolve [name]             pending evolution suggestions
   imps evolve <name> --applied all
   imps evolve <name> --dismiss <id>
+  imps evolve <name> --json
+  imps evolve <name> --debug
   imps doctor                    environment sanity checks
 
 A free-text prompt routes via the \`imp\` router: imps "what changed in git?"`);

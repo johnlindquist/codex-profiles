@@ -590,8 +590,8 @@ export function evolutionStatusLine(imp: string): string | undefined {
   const status = readStatus(imp);
   const score = status?.average_score ?? 90;
   const stars = "★★★★★".slice(0, Math.max(1, Math.min(5, Math.round(score / 20))));
-  if (pending === 0) return `${stars} | 🔁 0 evolutions pending`;
-  const suffix = pending >= 3 ? " — auto-evolution ready: imp evolve " + imp : "";
+  if (pending === 0) return undefined;
+  const suffix = pending >= 3 ? " — evolution review ready: imp evolve " + imp : "";
   return `${stars} | 🔁 ${pending} evolution${pending === 1 ? "" : "s"} pending${suffix}`;
 }
 

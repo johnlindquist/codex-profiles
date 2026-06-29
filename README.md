@@ -184,13 +184,28 @@ imps evolve imp-gh --applied all
 imps evolve imp-gh --dismiss <id>
 ```
 
+To intentionally mark one non-interactive run for evolution review, prefix the
+prompt with `+reason` on the first line. The feedback line is saved as review
+evidence and stripped before the model sees the task:
+
+```bash
+imp-rg --run $'+missed the obvious parser helper\nwhere is parseArgs defined?'
+```
+
 When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
 
 ```text
 🔁 2 evolutions pending
 ```
 
-At 3 pending suggestions the runtime writes `~/.imp/<imp-name>.evolve-request.json` and the status line changes to `auto-evolution ready`. That is the automatic trigger: it makes the review/apply step visible on the next run without silently rewriting the imp. After you make the prompt or code change, mark the reviewed suggestions with `--applied`; use `--dismiss` for noisy suggestions. The status line is deliberately stderr-only so stdout remains safe for pipes.
+At 3 pending suggestions the runtime writes `~/.imp/<imp-name>.evolve-request.json` and the status line changes to `evolution review ready`. That is the review trigger: it makes the review/apply step visible on the next run without silently rewriting the imp. After you make the prompt or code change, mark the reviewed suggestions with `--applied`; use `--dismiss` for noisy suggestions. The status line is deliberately stderr-only so stdout remains safe for pipes.
+
+For automation or debugging:
+
+```bash
+imps evolve imp-gh --json       # machine-readable pending suggestions
+imps evolve imp-gh --debug      # queue/status/trigger paths and env toggles
+```
 
 **`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `medium` is the default. Use `none`/`minimal` only for pure text replies.
 
@@ -257,7 +272,7 @@ Prompts are optimized for `gpt-5.5` at `medium` reasoning effort. Key patterns:
 - **Command maps**: Explicit IF/THEN mappings instead of vague instructions. Low-reasoning models need literal decision shortcuts.
 - **Worked examples**: 3-5 few-shot examples per imp (user request → numbered exact command sequence → report step). Low-reasoning models imitate examples far better than they follow abstract rules.
 - **Error recovery maps**: exact error text → exact next command, so a failed command never dead-ends the turn.
-- **Consistent structure**: Every imp follows the same section order: Operating rule → Command map → Workflow → Worked examples → Error recovery → Command rules → Output.
+- **Consistent structure**: Every imp follows the same section order: Mission → Tool-output trust boundary → Operating rule → Command map → Workflow → Mutation policy → Worked examples → Error recovery → Command rules → Output.
 - **No --help dumps**: Curated command maps are more effective than raw CLI reference for focused tool agents.
 
 ## How isolation works
