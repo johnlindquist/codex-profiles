@@ -6,11 +6,13 @@
  *   imps ps                       warm imps only: pid, uptime, idle timeout
  *   imps stop <name>|--all        stop warm imp(s)
  *   imps evolve [name]            pending evolution suggestions
+ *   imps init [--dir <root>]      create/update project-local ./imps runtime
  *   imps doctor                   environment sanity checks
  */
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { spawn, spawnSync } from "child_process";
+import { initProjectImps, InitProjectImpsConflictError } from "./lib/init.ts";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
 import {
   evolutionFilePath,
@@ -88,6 +90,86 @@ async function cmdStop(target?: string): Promise<void> {
 
 function writeJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function parseInitArgs(args: string[]): {
+  dir?: string;
+  force: boolean;
+  noInstall: boolean;
+  json: boolean;
+  help: boolean;
+} {
+  const parsed = { dir: undefined as string | undefined, force: false, noInstall: false, json: false, help: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--dir") {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error("usage: imps init --dir <project-root>");
+      parsed.dir = value;
+    } else if (arg === "--force") {
+      parsed.force = true;
+    } else if (arg === "--no-install") {
+      parsed.noInstall = true;
+    } else if (arg === "--json") {
+      parsed.json = true;
+    } else if (arg === "--help" || arg === "-h") {
+      parsed.help = true;
+    } else {
+      throw new Error(`unknown imps init argument: ${arg}`);
+    }
+  }
+  return parsed;
+}
+
+async function cmdInit(args: string[]): Promise<void> {
+  let opts: ReturnType<typeof parseInitArgs>;
+  try {
+    opts = parseInitArgs(args);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  if (opts.help) {
+    console.log(`Usage:
+  imps init
+  imps init --dir <project-root>
+  imps init --force
+  imps init --no-install
+  imps init --json`);
+    return;
+  }
+
+  try {
+    const result = await initProjectImps({
+      dir: opts.dir,
+      force: opts.force,
+      noInstall: opts.noInstall,
+      installStdio: opts.json ? "pipe" : "inherit",
+    });
+    if (opts.json) {
+      writeJson(result);
+      return;
+    }
+    const created = result.files.filter((f) => f.status === "created").length;
+    const updated = result.files.filter((f) => f.status === "updated").length;
+    const unchanged = result.files.filter((f) => f.status === "unchanged").length;
+    console.log(`initialized project-local imps runtime at ${result.impsDir}`);
+    console.log(`agent import: ${result.agentImport}`);
+    console.log(`runtime files: ${created} created, ${updated} updated, ${unchanged} unchanged`);
+    if (!result.installed) console.log("dependency install skipped");
+  } catch (error) {
+    if (opts.json) {
+      writeJson({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        conflicts: error instanceof InitProjectImpsConflictError ? error.conflicts : undefined,
+      });
+    } else {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+    process.exit(1);
+  }
 }
 
 function listQueueFiles(): string[] {
@@ -271,6 +353,9 @@ switch (cmd) {
   case "evolutions":
     cmdEvolve(rest.find((a) => !a.startsWith("--")), rest);
     break;
+  case "init":
+    await cmdInit(rest);
+    break;
   case "doctor":
     await cmdDoctor();
     break;
@@ -298,6 +383,7 @@ Usage:
   imps ps                        warm imps: pid, uptime, idle timeout
   imps stop <name>|--all         stop warm imp(s)
   imps evolve [name]             pending evolution suggestions
+  imps init [--dir <root>]       create/update project-local ./imps runtime
   imps evolve <name> --applied all
   imps evolve <name> --dismiss <id>
   imps evolve <name> --json

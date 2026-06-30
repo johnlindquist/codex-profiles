@@ -53,22 +53,42 @@ export function metaPath(name: string): string {
  * mtime) so edits are caught even when timestamps are preserved (git checkout,
  * tarball extraction, etc.).
  */
+export function runtimeLibDirsForExecutable(exe: string): string[] {
+  const dir = dirname(exe);
+  return [
+    join(dir, "lib"),
+    join(dir, "..", "lib"),
+  ];
+}
+
 export function sourceFingerprint(config?: ImpConfig): string {
   const files: string[] = [];
+  const seen = new Set<string>();
   let exe: string;
   try {
     exe = realpathSync(process.argv[1]);
   } catch {
     exe = process.argv[1];
   }
-  files.push(exe);
-  // lib/ sits next to the imps/ dir: <repo>/imps/imp-X -> <repo>/lib/*.ts
-  const libDir = join(dirname(exe), "..", "lib");
-  try {
-    for (const f of readdirSync(libDir)) {
-      if (f.endsWith(".ts")) files.push(join(libDir, f));
-    }
-  } catch {}
+
+  const addFile = (path: string) => {
+    let key = path;
+    try {
+      key = realpathSync(path);
+    } catch {}
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(path);
+  };
+
+  addFile(exe);
+  for (const libDir of runtimeLibDirsForExecutable(exe)) {
+    try {
+      for (const f of readdirSync(libDir)) {
+        if (f.endsWith(".ts")) addFile(join(libDir, f));
+      }
+    } catch {}
+  }
   const hash = createHash("sha256");
   void config;
   files.sort();

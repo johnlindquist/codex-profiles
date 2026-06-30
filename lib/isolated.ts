@@ -5,7 +5,7 @@
  * Use --quiet for buffered one-shot output.
  */
 
-import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
+import { Codex, type CodexOptions, type Input, type ThreadOptions } from "@openai/codex-sdk";
 import { rmSync, unlinkSync, writeFileSync } from "fs";
 import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
@@ -19,6 +19,8 @@ export interface ImpConfig {
   reasoningEffort?: string;
   baseInstructions: string;
   developerInstructions: string;
+  enableImageGeneration?: boolean;
+  inputImages?: string[];
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   extraEnv?: Record<string, string>;
 }
@@ -65,7 +67,7 @@ export function createIsolatedCodex(rawConfig: ImpConfig) {
         hooks: runtime.hooksEnabled,
         memories: false,
         apps: false,
-        image_generation: false,
+        image_generation: config.enableImageGeneration === true,
         tool_search: false,
         tool_suggest: false,
       },
@@ -100,7 +102,9 @@ function buildInteractiveFlags(config: ImpConfig, hooksOn = false): string[] {
       : ["--disable", "hooks"]),
     "--disable", "memories",
     "--disable", "apps",
-    "--disable", "image_generation",
+    ...(config.enableImageGeneration === true
+      ? ["-c", "features.image_generation=true"]
+      : ["--disable", "image_generation"]),
     "--disable", "tool_search",
     "--disable", "tool_suggest",
     "-c", "skills.include_instructions=false",
@@ -158,6 +162,15 @@ export function parseArgs(argv: string[]) {
     .filter((a, i) => !flags.includes(a) && a !== "--effort" && a !== "--turn-timeout-ms" && a !== "--timeout-ms" && i !== effortValueIdx && i !== turnTimeoutValueIdx)
     .join(" ");
   return { interactive, quiet, help, serve, noWarm, run, effort, turnTimeoutMs, prompt, noArgs: args.length === 0 };
+}
+
+function buildTurnInput(prompt: string, inputImages?: string[]): Input {
+  const images = inputImages?.filter(Boolean) ?? [];
+  if (!images.length) return prompt;
+  return [
+    ...images.map((path) => ({ type: "local_image" as const, path })),
+    { type: "text" as const, text: prompt },
+  ];
 }
 
 // Renders streaming app-server JSON-RPC notifications (warm imp path).
@@ -336,7 +349,12 @@ non-interactive path, or --no-warm for a cold one-off run.`);
   // a background imp so every call skips process spawn + auth/config load +
   // WebSocket prewarm. Opt out with --no-warm. If the imp can't be brought up,
   // fall through to a cold in-process run.
-  if (!noWarm && (await ensureWarmImp(config))) {
+  const hasImageInputs = (config.inputImages?.length ?? 0) > 0;
+  if (hasImageInputs && !noWarm) {
+    process.stderr.write(`${config.name}: ${config.inputImages!.length} local_image reference(s) require cold SDK mode; skipping warm app-server path.\n`);
+  }
+
+  if (!hasImageInputs && !noWarm && (await ensureWarmImp(config))) {
     const onSignal = () => { ac.abort(); cleanupStdin(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
@@ -380,14 +398,15 @@ non-interactive path, or --no-warm for a cold one-off run.`);
 
   const thread = startThread();
   const observer = createEvolutionObserver(config, effectivePrompt, evolutionSignal);
+  const turnInput = buildTurnInput(effectivePrompt, config.inputImages);
 
   try {
     if (quiet) {
-      const turn = await thread.run(effectivePrompt, { signal: ac.signal });
+      const turn = await thread.run(turnInput, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
       observer.finish({ status: "completed", transport: "sdk-quiet", finalText: turn.finalResponse });
     } else {
-      const { events } = await thread.runStreamed(effectivePrompt, { signal: ac.signal });
+      const { events } = await thread.runStreamed(turnInput, { signal: ac.signal });
       for await (const event of events) {
         observer.onSdkEvent(event);
         renderEvent(event);
