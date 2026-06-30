@@ -244,6 +244,11 @@ Usage:
   ${config.name} --timeout-ms <ms>   Override warm turn timeout for this prompt
   ${config.name} --help              Show this help
 
+Evolution:
+  Prefix a non-interactive prompt with +reason on the first line to mark that
+  run for evolution review. The feedback line is saved as review evidence and
+  stripped before the model sees the actual task.
+
 By default imps open the interactive Codex TUI. Use --run for the warm
 non-interactive path, or --no-warm for a cold one-off run.`);
     process.exit(0);

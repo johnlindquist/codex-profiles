@@ -173,7 +173,7 @@ test("clean telemetry records a stabilization summary", () => {
   expect("summary" in result).toBe(true);
   expect(appendStabilization(result as any)).toBe(true);
   expect(readStabilizations("imp-stable").length).toBe(1);
-  expect(evolutionStatusLine("imp-stable")).toContain("★★★★★");
+  expect(evolutionStatusLine("imp-stable")).toBeUndefined();
 });
 
 test("enqueueEvolutionJob writes a durable queue file", () => {
@@ -200,7 +200,7 @@ test("three pending suggestions create an automatic evolution trigger", () => {
   expect(trigger?.command).toBe("imp evolve imp-threshold");
   expect(readEvolutionTrigger("imp-threshold")?.reason).toContain("automatic threshold");
   expect(readFileSync(evolutionTriggerPath("imp-threshold"), "utf8")).toContain("imp evolve imp-threshold");
-  expect(evolutionStatusLine("imp-threshold")).toContain("auto-evolution ready");
+  expect(evolutionStatusLine("imp-threshold")).toContain("evolution review ready");
 });
 
 test("reviewed suggestions stop counting as pending", () => {
