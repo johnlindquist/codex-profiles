@@ -156,7 +156,9 @@ export class AppServerClient {
         bypass_hook_trust: this.hooksEnabled,
         features: {
           plugins: false, hooks: this.hooksEnabled, memories: false, apps: false,
-          image_generation: false, tool_search: false, tool_suggest: false,
+          image_generation: this.config.enableImageGeneration === true,
+          tool_search: false,
+          tool_suggest: false,
         },
       },
     });
