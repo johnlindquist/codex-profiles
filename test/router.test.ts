@@ -17,6 +17,7 @@ test("routes by keyword to the right imp", () => {
   expect(which("any unread email from alice?").out).toBe("imp-gmail");
   expect(which("How many DESIGN.md files can you find on github that have been created in the past 2 months?").out).toBe("imp-github-examples");
   expect(which("check the codex app-server runtime").out).toBe("imp-codex");
+  expect(which("define serendipity and give rhymes").out).toBe("imp-demo");
 });
 
 test("explicit tool prefix routes deterministically", () => {

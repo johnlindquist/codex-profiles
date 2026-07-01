@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warm Imps: Lifecycle and Operations</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2430;
+      --muted: #5a6472;
+      --line: #d6dbe2;
+      --paper: #fbfaf7;
+      --panel: #ffffff;
+      --accent: #1b7467;
+      --accent-2: #a13f2b;
+      --code: #202936;
+      --code-bg: #eef2f1;
+      --soft: #f0ece4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1120px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+      gap: 28px;
+      align-items: end;
+      padding: 30px 0 34px;
+      border-bottom: 2px solid var(--ink);
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.3rem, 6vw, 5.4rem);
+      line-height: .95;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.1rem;
+    }
+
+    .quick-card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 8px 0 var(--soft);
+    }
+
+    .quick-card h2,
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: .9rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--accent);
+    }
+
+    .quick-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, .72fr);
+      gap: 24px;
+      margin-top: 28px;
+    }
+
+    .section {
+      padding: 26px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section > p {
+      max-width: 780px;
+      color: var(--muted);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      margin: 18px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+    }
+
+    .num {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 2px solid var(--ink);
+      border-radius: 50%;
+      font-weight: 800;
+      color: var(--accent-2);
+      background: var(--paper);
+    }
+
+    .step h3,
+    .check h3 {
+      margin: 0 0 4px;
+      font-size: 1.05rem;
+    }
+
+    .step p,
+    .check p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    code,
+    kbd {
+      padding: .1rem .32rem;
+      border-radius: 4px;
+      background: var(--code-bg);
+      color: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: .92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 14px 0 0;
+      padding: 16px;
+      border-radius: 8px;
+      background: #202936;
+      color: #f8fafc;
+      font-size: .92rem;
+      line-height: 1.5;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: var(--soft);
+      font-size: .82rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--accent);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .side {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .check {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .check strong {
+      color: var(--accent-2);
+    }
+
+    .vars {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .var {
+      display: grid;
+      grid-template-columns: minmax(180px, .8fr) minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .var:last-child {
+      border-bottom: 0;
+    }
+
+    .var p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    footer {
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 2px solid var(--ink);
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    @media (max-width: 820px) {
+      header,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        width: min(100vw - 24px, 1120px);
+        padding-top: 18px;
+      }
+
+      .var,
+      .step {
+        grid-template-columns: 1fr;
+      }
+
+      .num {
+        width: 30px;
+        height: 30px;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Warm Imps: Lifecycle and Operations</h1>
+        <p class="lead">Warm imps are the default path for non-interactive text runs. The first prompt starts a background <code>--serve</code> process; later prompts reuse it. The process is warm, but every prompt still gets a fresh ephemeral Codex thread.</p>
+      </div>
+      <aside class="quick-card">
+        <h2>Core Rule</h2>
+        <p>Warm mode buys latency. It is not conversational memory, and requests are serialized through one resident app-server per imp.</p>
+      </aside>
+    </header>
+
+    <section class="section">
+      <h2>Lifecycle</h2>
+      <ol class="timeline">
+        <li class="step">
+          <span class="num">1</span>
+          <div>
+            <h3>Start</h3>
+            <p>Explicit non-interactive text calls such as <code>--run</code>, <code>--exec</code>, <code>--non-interactive</code>, and <code>-q</code> use warm mode unless <code>--no-warm</code> is passed. Input-image turns skip warm mode.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">2</span>
+          <div>
+            <h3>Spawn</h3>
+            <p>If no reusable warm imp is listening, the client starts a detached copy of the same executable with <code>--serve</code>. Running <code>imp-gh --serve</code> directly keeps that server in the foreground for a supervisor.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">3</span>
+          <div>
+            <h3>Ready</h3>
+            <p>The warm server starts <code>codex app-server</code>, completes the initialize handshake, then accepts a Unix socket connection. Client readiness polling defaults to <code>CODEX_IMP_READY_TIMEOUT_MS=120000</code>.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">4</span>
+          <div>
+            <h3>Run</h3>
+            <p>Each request sends prompt, cwd, effort, quiet flag, and turn timeout over the socket. The warm server serializes requests and starts a fresh <code>thread/start</code> plus <code>turn/start</code> on the already-warm app-server.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">5</span>
+          <div>
+            <h3>Hot Reload</h3>
+            <p>Before reuse, the client compares the current source fingerprint with warm metadata. If the imp executable or loaded runtime files changed, the old warm process is stopped and a fresh one starts before the prompt runs.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">6</span>
+          <div>
+            <h3>Idle Shutdown</h3>
+            <p>Warm imps shut down after <code>CODEX_IMP_IDLE_MINUTES</code>, default <code>30</code>, once no turns are active. Set it to <code>0</code> to disable idle shutdown.</p>
+          </div>
+        </li>
+        <li class="step">
+          <span class="num">7</span>
+          <div>
+            <h3>Manual Stop</h3>
+            <p>Use <code>imps stop imp-gh</code> for one warm imp or <code>imps stop --all</code> for the fleet. Use <code>imps doctor</code> when stale socket state is suspected.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <div class="grid">
+      <section class="section">
+        <h2>Decision Table</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Situation</th>
+              <th>Do This</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Repeated text prompts</td>
+              <td>Let warm mode run</td>
+              <td>Best default latency path.</td>
+            </tr>
+            <tr>
+              <td>One-off clean debug run</td>
+              <td>Add <code>--no-warm</code></td>
+              <td>Avoids the resident process entirely.</td>
+            </tr>
+            <tr>
+              <td>Input images</td>
+              <td>Expect the cold path</td>
+              <td>Warm mode is skipped for image turns.</td>
+            </tr>
+            <tr>
+              <td>Need a supervised server</td>
+              <td>Run <code>imp-gh --serve</code></td>
+              <td>Foreground process for launchd, systemd, or manual observation.</td>
+            </tr>
+            <tr>
+              <td>Prompt exceeds turn budget</td>
+              <td>Use <code>--timeout-ms</code>, <code>--turn-timeout-ms</code>, or <code>CODEX_IMP_TURN_TIMEOUT_MS</code></td>
+              <td>Controls per-prompt work time.</td>
+            </tr>
+            <tr>
+              <td>Startup/readiness is slow</td>
+              <td>Tune <code>CODEX_IMP_READY_TIMEOUT_MS</code> or <code>CODEX_IMP_START_TIMEOUT_MS</code></td>
+              <td>These are startup waits, not prompt waits.</td>
+            </tr>
+            <tr>
+              <td>Many old warm imps</td>
+              <td>Run <code>imps ps</code>, then <code>imps stop --all</code></td>
+              <td>Cleans resident background processes.</td>
+            </tr>
+            <tr>
+              <td>Suspect stale socket state</td>
+              <td>Run <code>imps doctor</code></td>
+              <td>Uses the supported cleanup path.</td>
+            </tr>
+            <tr>
+              <td>Edited imp/runtime source</td>
+              <td>Run again, or force <code>imps stop &lt;name&gt;</code> if in doubt</td>
+              <td>Fingerprint mismatch should restart stale warm state.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <aside class="side">
+        <div class="check">
+          <h3>Fast Commands</h3>
+          <pre><code>imp-gh --run "list my open PRs"
+imp-gh --run --no-warm "list my open PRs"
+imp-gh --serve
+imps ps
+imps stop imp-gh
+imps stop --all
+imps doctor</code></pre>
+        </div>
+
+        <div class="check">
+          <h3>What Ready Means</h3>
+          <p>Ready means the imp server has started <code>codex app-server</code>, completed initialization, and is accepting socket connections. It does not mean a user prompt has already started.</p>
+        </div>
+
+        <div class="check">
+          <h3>What Warm Does Not Mean</h3>
+          <p><strong>No prompt memory.</strong> Each call starts a fresh ephemeral thread. The reused part is process setup, auth/config load, app-server startup, and transport warmth.</p>
+        </div>
+      </aside>
+    </div>
+
+    <section class="section">
+      <h2>Timeout Knobs</h2>
+      <div class="vars">
+        <div class="var">
+          <code>CODEX_IMP_IDLE_MINUTES=30</code>
+          <p>How long an inactive warm imp stays alive. Set <code>0</code> to disable idle shutdown.</p>
+        </div>
+        <div class="var">
+          <code>CODEX_IMP_READY_TIMEOUT_MS=120000</code>
+          <p>How long the client waits for a newly spawned warm imp to accept socket connections.</p>
+        </div>
+        <div class="var">
+          <code>CODEX_IMP_START_TIMEOUT_MS=180000</code>
+          <p>How long app-server RPC/startup waits can take before failing.</p>
+        </div>
+        <div class="var">
+          <code>CODEX_IMP_TURN_TIMEOUT_MS=300000</code>
+          <p>Default per-prompt warm turn watchdog. Override one call with <code>--timeout-ms</code> or <code>--turn-timeout-ms</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Under The Hood</h2>
+      <p>The implementation uses a Unix socket at <code>/tmp/codex-imp-{name}.sock</code> and metadata at <code>/tmp/codex-imp-{name}.meta.json</code>. Treat those as implementation details. Prefer <code>imps ps</code>, <code>imps stop</code>, and <code>imps doctor</code> for normal operations.</p>
+      <p>If warm startup fails or the connection drops, the caller can fall back to a cold in-process SDK run. That fallback explains occasional slower calls without implying the imp is broken.</p>
+    </section>
+
+    <footer>
+      Source-backed from <code>README.md</code>, <code>lib/imp.ts</code>, <code>lib/appserver.ts</code>, <code>lib/isolated.ts</code>, <code>lib/defaults.ts</code>, and <code>imps.ts</code> in <code>codex-imps</code>.
+    </footer>
+  </main>
+</body>
+</html>

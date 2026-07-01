@@ -82,7 +82,7 @@ const {
   parseEvolutionPromptAction,
   recordUserEvolutionSignal,
 } = await import(evolutionModuleUrl);
-const action = parseEvolutionPromptAction(prompt, { impSourcePath });
+const action = parseEvolutionPromptAction(prompt, { imp: impName, impSourcePath });
 if (action.kind === "none") {
   process.exit(0);
 }
@@ -566,7 +566,10 @@ non-interactive path, or --no-warm for a cold one-off run.`);
     if (stdinFile) { try { unlinkSync(stdinFile); } catch {} }
   };
 
-  const evolutionAction = parseEvolutionPromptAction(effectivePrompt, { impSourcePath: currentImpSourcePath(config) });
+  const evolutionAction = parseEvolutionPromptAction(effectivePrompt, {
+    imp: config.name,
+    impSourcePath: currentImpSourcePath(config),
+  });
   if (evolutionAction.kind === "evolve") {
     effectivePrompt = `${evolutionAction.context}
 

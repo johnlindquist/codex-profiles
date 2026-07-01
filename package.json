@@ -33,6 +33,7 @@
     "imp-browser-automate": "./imps/imp-browser-automate",
     "imp-codex": "./imps/imp-codex",
     "imp-codex-arch": "./imps/imp-codex-arch",
+    "imp-demo": "./imps/imp-demo",
     "imp-hooks": "./imps/imp-hooks",
     "imp-deadpool": "./imps/imp-deadpool",
     "imp-eggo-book-of-travels": "./imps/imp-eggo-book-of-travels",

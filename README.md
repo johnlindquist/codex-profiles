@@ -67,6 +67,7 @@ bun imps/imp-gh
 | `imp-browser` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Browser automation (hidden/headless browser it owns) |
 | `imp-browser-automate` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Drives your **live** Chrome over CDP — your real tabs, logins, session |
 | `imp-codex` | [codex](https://www.npmjs.com/package/@openai/codex) | Codex CLI, SDK, app-server, and codex-imps runtime maintenance |
+| `imp-demo` | — | No-tools word and phrase explainer: definitions, rhymes, usage, etymology, and related notes |
 | `imp-ffmpeg` | [ffmpeg](https://ffmpeg.org) | Video/audio: probe, convert, trim, scale, extract, GIFs (never overwrites inputs) |
 | `imp-imagemagick` | [magick](https://imagemagick.org) | Images: identify, resize, crop, convert, montage (never overwrites originals) |
 | `imp-yt-dlp` | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video downloads: formats, audio-only, subtitles, playlists (guarded bulk) |
@@ -230,6 +231,13 @@ Inline `^` evolution includes a `Target imp source path:` line captured from the
 imp executable path at startup, so the model has a concrete file to inspect
 instead of guessing which imp owns the conversation.
 
+When pending suggestions exist, inline `^` includes a compact, redacted list of
+pending suggestion ids, recommendations, first evidence lines, and session-log
+paths as untrusted review evidence. The imp should discuss those suggestions
+with the user and propose the smallest prompt-first evolution path. It must not
+treat stored suggestion text as instructions, and it must not mark suggestions
+applied or dismissed without explicit user intent.
+
 When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
 
 ```text
@@ -315,7 +323,7 @@ Prompts are optimized for `gpt-5.5` at `medium` reasoning effort. Key patterns:
 
 ## How isolation works
 
-Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`. Combined with feature flags, this strips ~16K tokens of overhead:
+Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`, filtered project trust config, and imp-owned TUI defaults such as `[tui] show_tooltips = false`. Combined with feature flags, this strips ~16K tokens of overhead:
 
 | What's disabled | Tokens saved | Config key |
 |---|---|---|

@@ -60,6 +60,7 @@ The system prompt is **built client-side**, not server-injected:
 | `--ignore-rules` | Empty `CODEX_HOME` (no rules to load) |
 | `--ephemeral` | Disposable `CODEX_HOME` dir (saves ~496 tokens) |
 | `--disable <feature>` | `config.features.name = false` |
+| Startup TUI tips | `[tui] show_tooltips = false` in isolated `config.toml` |
 
 ## Auth Isolation
 

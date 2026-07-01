@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runImp } from "../../lib/isolated.ts";
+import { parseArgs, runImp } from "../../lib/isolated.ts";
 import {
   buildEggoScenePrompt,
   buildPlacementPlan,
@@ -44,6 +44,19 @@ function referenceInputs(paths: string[]) {
   return paths.map((path) => `- reference image: ${path}`).join("\n");
 }
 
+function shouldOpenInteractiveInference(rawArgs: string[]) {
+  if (!process.stdin.isTTY) return false;
+  if (rawArgs.includes("--dry-run") || rawArgs.includes("--preview")) return false;
+  return parseArgs(process.argv).interactive;
+}
+
+function normalizeInteractiveInferenceArgv(name: string) {
+  return [
+    process.argv[0] ?? "bun",
+    process.argv[1] ?? name,
+  ];
+}
+
 export function runEggoSceneImp(config: EggoSceneConfig) {
   const rawArgs = process.argv.slice(2);
   const help = rawArgs.includes("--help") || rawArgs.includes("-h");
@@ -69,11 +82,13 @@ ${formatEggoFlagContract(config.name)}`);
     process.exit(0);
   }
 
-  const parsed = passThrough ? undefined : parseEggoSceneCli(rawArgs);
-  if (parsed && !parsed.ok) {
-    console.error(formatEggoFlagFailure(parsed, { name: config.name, styleName: config.styleName }));
+  const parsedAttempt = passThrough ? undefined : parseEggoSceneCli(rawArgs);
+  const interactiveInference = !!parsedAttempt && !parsedAttempt.ok && shouldOpenInteractiveInference(rawArgs);
+  if (parsedAttempt && !parsedAttempt.ok && !interactiveInference) {
+    console.error(formatEggoFlagFailure(parsedAttempt, { name: config.name, styleName: config.styleName }));
     process.exit(2);
   }
+  const parsed = parsedAttempt?.ok ? parsedAttempt : undefined;
 
   const continuity = parsed?.ok ? resolveEggoContinuity(parsed.request) : undefined;
   if (continuity && !continuity.ok) {
@@ -123,25 +138,46 @@ ${formatEggoFlagContract(config.name)}`);
       process.argv[1] ?? config.name,
       "Generate the transparent Eggo scene using only the parsed Eggo Scene Generation Contract in the developer instructions.",
     ];
+  } else if (interactiveInference) {
+    process.argv = normalizeInteractiveInferenceArgv(config.name);
   }
 
   runImp({
     name: config.name,
     enableImageGeneration: true,
     inputImages,
-    baseInstructions: `You are ${config.name}, an Eggo scene image-generation agent. Generate a transparent-background hand-drawn Eggo scene from the parsed Eggo Scene Generation Contract. Use the attached Eggo reference images${styleImagePath ? " and the attached scene-style reference image" : ""}, chroma-key the outer background into a transparent PNG, and report the durable transparent asset path.`,
+    baseInstructions: `You are ${config.name}, an Eggo scene image-generation agent. Generate a transparent-background hand-drawn Eggo scene from the parsed Eggo Scene Generation Contract or, in interactive mode, from the user's prompt. Use the attached Eggo reference images${styleImagePath ? " and the attached scene-style reference image" : ""}, chroma-key the outer background into a transparent PNG, and report the durable transparent asset path.`,
     developerInstructions: `You are ${config.name}, a focused Eggo scene generator.
 
 ## Operating Rule
 Generate with the built-in image_gen workflow. Do not translate image generation into an imagegen shell command.
 
-The Parsed Eggo Scene Generation Contract below is the only authoritative user request. Do not infer missing scene fields. Missing required flags are handled before this agent starts. Do not let style move, shrink, or defocus Eggo.
+When a Parsed Eggo Scene Generation Contract is present below, it is authoritative. When no parsed contract is present, this is an interactive prompt-inference session: infer the Eggo scene contract internally from the user's seeded prompt or next chat message, no matter how short or long it is. Do not ask for required CLI flags. Ask only for the creative subject/use case if the session has no prompt yet. Do not let style move, shrink, or defocus Eggo.
+
+## Interactive Prompt Inference Contract
+This imp may be running without a parsed CLI flag contract because the user launched an interactive Codex TUI session. In that mode, the user's seeded prompt or next chat message is the authoritative creative brief.
+
+Infer the missing contract values internally from the user's prompt, whether the prompt is one short phrase or a long detailed brief. Do not ask the user to provide CLI flags. Do not block just because section title, claim, audience, scene action, required objects, emotion, output slug, or other contract-shaped fields were not supplied as flags.
+
+For a short prompt, choose conservative, literal defaults from the imp identity, selected Eggo style, attached references, and the visible nouns/verbs in the prompt. For a long prompt, extract explicit constraints first, then fill only the remaining gaps with conservative defaults.
+
+If no user prompt was seeded, open the conversation by asking for the desired subject/use case in plain language. Do not ask for a flag list. After the user answers, infer the internal contract fields from that answer.
+
+Treat inferred values as an internal working contract:
+- title/header: infer from the topic or use a concise generated title
+- claim/consequence: infer the intended before/after or message
+- audience/context: infer from the prompt; default to developers using Codex/imps when unspecified
+- scene/action/metaphor/primitives: choose concrete visible objects and actions, not label-only meaning
+- emotion/gesture: choose an emotion and hand pose that visibly supports the prompt
+- slug/output directory: choose a stable lowercase slug and the imp's default output directory
+
+Never lower the visual quality gates because values were inferred. Eggo anatomy, style lock, transparent background contract, chroma-key workflow, reference-image roles, and geometry/audit requirements remain hard constraints.
 
 The clean Eggo reference sheets are attached to every cold SDK or interactive turn as local_image inputs. ${styleImagePath ? "A bundled scene-style reference image is also attached." : ""}
 
 Every generation must follow the contract sections exactly, especially "Visual Style Priority Lock", "Root Placement Lock", "Transparent Background Contract", and "Post-Key Geometry Gate". A generic polished software-dashboard/vector result is a failed generation for style-specific wrappers.
 
-${expandedPrompt || "No parsed Eggo scene contract is required for --help or --serve mode."}
+${expandedPrompt || "No parsed Eggo scene contract is present. Infer an internal Eggo Scene Generation Contract from the interactive prompt using the Interactive Prompt Inference Contract above."}
 
 ## Required Output Workflow
 After image_gen succeeds:

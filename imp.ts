@@ -39,6 +39,7 @@ const ROUTES: Route[] = [
   { imp: "imp-cmux", pattern: /\b(cmux|workspace|pane|surface|split|tmux)\b/i, hint: "terminal workspaces" },
   { imp: "imp-browser-automate", pattern: /\b(my (chrome|browser)|current tab|live tab|logged.?in (page|site|session)|real browser)\b/i, hint: "your live Chrome" },
   { imp: "imp-browser", pattern: /\b(browser|web ?page|website|snapshot|form fill|headless)\b/i, hint: "hidden browser automation" },
+  { imp: "imp-demo", pattern: /\b(define|definition|meaning|rhyme|rhymes|etymolog(?:y|ies)|origin of|word profile|phrase profile)\b/i, hint: "word and phrase explainer" },
   { imp: "imp-github-examples", pattern: /\b(github examples?|examples? on github|borrow from github|open.?source examples?|reference implementations?|created in the past|created (within|in) the last|recent github examples?|[A-Za-z0-9_.-]+\.(md|ts|tsx|js|jsx|py|rs|go|rb|java|kt|swift|json|yaml|yml|toml))\b/i, hint: "GitHub example search" },
   { imp: "imp-gh", pattern: /\b(github|gh|pull request|prs?|issues?|ci run|workflow run|releases?|repo)\b/i, hint: "GitHub" },
   { imp: "imp-git", pattern: /\b(git|commits?|branch(es)?|stash|staged|unstaged|merge|rebase|push|pull)\b/i, hint: "local git" },

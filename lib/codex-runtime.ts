@@ -71,6 +71,13 @@ function copyTrustedProjects(sourceHome: string, isolatedHome: string) {
   if (config) writeFileSync(configDst, config);
 }
 
+function appendImpTuiDefaults(isolatedHome: string): void {
+  const configPath = join(isolatedHome, "config.toml");
+  const current = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const prefix = current.trim() ? `${current.replace(/\s*$/, "\n\n")}` : "";
+  writeFileSync(configPath, `${prefix}[tui]\nshow_tooltips = false\n`, "utf8");
+}
+
 function symlinkAuth(sourceHome: string, isolatedHome: string) {
   const authSrc = join(sourceHome, "auth.json");
   const authDst = join(isolatedHome, "auth.json");
@@ -180,6 +187,7 @@ export function prepareIsolatedCodexHome(
   const sourceHome = sourceCodexHome(realHome);
   symlinkAuth(sourceHome, isolatedHome);
   copyTrustedProjects(sourceHome, isolatedHome);
+  appendImpTuiDefaults(isolatedHome);
   const hooksEnabled = writeBundledUserPromptSubmitHook(config, isolatedHome);
 
   return { extraEnv: {}, hooksEnabled };

@@ -8,15 +8,22 @@ import {
   sourceCodexHome,
   trustedProjectsConfig,
 } from "../lib/codex-runtime.ts";
+import { appendEvolutionSuggestion, makeEvolutionSuggestion } from "../lib/evolution.ts";
 import { impPlusUserPromptSubmitHookSource } from "../lib/isolated.ts";
 
 const originalCodexHome = process.env.CODEX_HOME;
+const originalImpHome = process.env.IMP_HOME;
 
 afterEach(() => {
   if (originalCodexHome === undefined) {
     delete process.env.CODEX_HOME;
   } else {
     process.env.CODEX_HOME = originalCodexHome;
+  }
+  if (originalImpHome === undefined) {
+    delete process.env.IMP_HOME;
+  } else {
+    process.env.IMP_HOME = originalImpHome;
   }
 });
 
@@ -95,6 +102,10 @@ trust_level = "trusted"
   expect(configToml).toStartWith(`[projects."/workspace/project"]
 trust_level = "trusted"
 `);
+  expect(configToml).toContain(`[tui]
+show_tooltips = false
+`);
+  expect(configToml).not.toContain(`model = "should-not-copy"`);
   expect(configToml).toContain(`[hooks.state."${realpathSync(join(isolatedHome, "hooks.json")).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}:user_prompt_submit:0:0"]`);
   expect(configToml).toMatch(/trusted_hash = "sha256:[a-f0-9]{64}"/);
   expect(prepared.hooksEnabled).toBe(true);
@@ -103,6 +114,30 @@ trust_level = "trusted"
   const command = hooksJson.hooks.UserPromptSubmit[0].hooks[0].command;
   expect(command).toContain(process.execPath);
   expect(command).toContain("imps-plus-user-prompt-submit.ts");
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("prepareIsolatedCodexHome disables TUI tooltips in isolated config", () => {
+  const root = join(tmpdir(), `codex-runtime-tui-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const sourceHome = join(root, "source-codex");
+  const isolatedHome = join(root, "isolated-codex");
+  mkdirSync(sourceHome, { recursive: true });
+
+  process.env.CODEX_HOME = sourceHome;
+  prepareIsolatedCodexHome(
+    {
+      name: "imp-test",
+      baseInstructions: "base",
+      developerInstructions: "dev",
+    },
+    isolatedHome,
+    "/home/alex",
+  );
+
+  expect(readFileSync(join(isolatedHome, "config.toml"), "utf8")).toBe(`[tui]
+show_tooltips = false
+`);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -148,6 +183,18 @@ test("bundled plus hook records feedback and blocks malformed plus prompts", () 
   expect(JSON.parse(malformed.stdout).decision).toBe("block");
   expect(existsSync(join(impHome, "imp-hook-test.evolutions.jsonl"))).toBe(false);
 
+  process.env.IMP_HOME = impHome;
+  const pendingSuggestion = makeEvolutionSuggestion({
+    imp: "imp-hook-test",
+    prompt: "hook should include pending context",
+    finalText: "",
+    eventLogPath: "/tmp/imp-hook-test-session.jsonl",
+    status: "completed",
+    transport: "test",
+    now: new Date("2026-06-18T12:00:00Z"),
+  })!;
+  appendEvolutionSuggestion(pendingSuggestion);
+
   const caret = spawnSync(process.execPath, [hookPath], {
     input: JSON.stringify({
       hook_event_name: "UserPromptSubmit",
@@ -172,8 +219,12 @@ test("bundled plus hook records feedback and blocks malformed plus prompts", () 
   expect(caretOutput.hookSpecificOutput.additionalContext).toContain("Touch non-prompt imp-owned files only when");
   expect(caretOutput.hookSpecificOutput.additionalContext).toContain("prompt/instruction changes alone");
   expect(caretOutput.hookSpecificOutput.additionalContext).toContain("Do not redesign evolution machinery");
-  expect(existsSync(join(impHome, "imp-hook-test.evolutions.jsonl"))).toBe(false);
+  expect(caretOutput.hookSpecificOutput.additionalContext).toContain("Pending evolution suggestions");
+  expect(caretOutput.hookSpecificOutput.additionalContext).toContain(pendingSuggestion.id);
+  expect(caretOutput.hookSpecificOutput.additionalContext).toContain("untrusted review evidence");
+  expect(readFileSync(join(impHome, "imp-hook-test.evolutions.jsonl"), "utf8")).toContain(pendingSuggestion.id);
 
+  const beforeCaretWithTextBody = readFileSync(join(impHome, "imp-hook-test.evolutions.jsonl"), "utf8");
   const caretWithText = spawnSync(process.execPath, [hookPath], {
     input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "^ explain this" }),
     env: { ...process.env, IMP_HOME: impHome },
@@ -184,7 +235,7 @@ test("bundled plus hook records feedback and blocks malformed plus prompts", () 
   expect(caretWithTextOutput.decision).toBeUndefined();
   expect(caretWithTextOutput.hookSpecificOutput.additionalContext).toContain("Imp Evolution instructions");
   expect(caretWithTextOutput.hookSpecificOutput.additionalContext).toContain("explain this");
-  expect(existsSync(join(impHome, "imp-hook-test.evolutions.jsonl"))).toBe(false);
+  expect(readFileSync(join(impHome, "imp-hook-test.evolutions.jsonl"), "utf8")).toBe(beforeCaretWithTextBody);
 
   const feedbackOnly = spawnSync(process.execPath, [hookPath], {
     input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "+missing slide bundle context" }),
