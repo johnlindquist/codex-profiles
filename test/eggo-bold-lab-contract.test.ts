@@ -69,6 +69,15 @@ describe("Eggo bold-lab contract", () => {
     }
   });
 
+  test("reaction emotion taxonomy accepts non-positive slide emotions", () => {
+    for (const emotion of ["skeptical", "overwhelmed", "exhausted"]) {
+      const result = parse(["--main-eggo-emotion", emotion]);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(`expected ${emotion} to parse`);
+      expect(result.request.mainEggoEmotion).toBe(emotion);
+    }
+  });
+
   test("requires green-screen key and mini-eggo robot proxy primitive", () => {
     const wrongKey = parse(["--background-key", "#ffffff"]);
     expect(wrongKey.ok).toBe(false);
@@ -122,6 +131,12 @@ describe("Eggo bold-lab contract", () => {
     expect(prompt).toContain("use them as pose, hand, eyebrow, and expression-mark vocabulary references");
     expect(prompt).toContain("Infer the drawing style, line quality, shape language, color behavior, composition energy, and level of simplicity from Image 1.");
     expect(prompt).toContain("Do not name or blend in any other style source.");
+    expect(prompt).toContain("Do not make the image look like a polished render");
+    expect(prompt).toContain("3D toy render");
+    expect(prompt).toContain("soft-material render");
+    expect(prompt).toContain("Keep forms flat and cartoon-readable");
+    expect(prompt).toContain("bold 2D sticker cluster");
+    expect(prompt).toContain("no rendered material texture");
     expect(prompt).toContain("Use the requested pose, position, and camera angle when provided");
     expect(prompt).toContain("low angle, slight overhead, over-shoulder, side-view, close-up, or three-quarter cartoon staging");
     expect(prompt).toContain("bold sticker-like cluster rather than an isometric scene");
@@ -150,8 +165,78 @@ describe("Eggo bold-lab contract", () => {
     expect(prompt).toContain("Use at most one closed fist across an entire batch");
     expect(prompt).toContain("Main Eggo always keeps complete black glasses visible");
     expect(prompt).toContain("the glasses may tilt, slide, reflect, or be touched by hands");
-    expect(prompt).toContain("no eyes, no pupils, no mouth, no nose, no legs, no feet, no arms, no wrists, no sleeves");
+    expect(prompt).toContain("no eyes, no pupils, no mouth, no nose, no legs, no feet, no shoes, no footwear, no arms, no forearms, no elbows, no wrists, no sleeves");
+    expect(prompt).toContain("no crossed-arm bands");
     expect(prompt).toContain("Hands are floating white mittens");
+    expect(prompt).toContain("Hand plausibility: Eggo has no visible arms");
+    expect(prompt).toContain("Eggo-left appears on viewer-right and Eggo-right appears on viewer-left");
+    expect(prompt).toContain("complementary left/right pair");
+    expect(prompt).toContain("not two left hands, two right hands");
+    expect(prompt).toContain("short, reference-like reach");
+  });
+
+  test("prompt rejects visible arms and shell texture before chroma-keying", () => {
+    const result = parse([
+      "--scene-action", "main Eggo folds floating hands near a result card while two mini-eggo robot proxies wait",
+      "--main-eggo-emotion", "concerned",
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected parse success");
+    const prompt = buildEggoBoldLabPrompt(result.request, []);
+
+    expect(prompt).toContain("no arms, no forearms, no elbows, no wrists, no sleeves, no crossed-arm bands");
+    expect(prompt).toContain("no limb connector lines");
+    expect(prompt).toContain("smooth flat off-white cartoon fill");
+    expect(prompt).toContain("only one or two broad soft shadow shapes");
+    expect(prompt).toContain("clean vector/cartoon color");
+    expect(prompt).toContain("Do not add egg-shell texture");
+    expect(prompt).toContain("paper grain");
+    expect(prompt).toContain("pencil hatching");
+    expect(prompt).toContain("contour hatch lines");
+    expect(prompt).toContain("scratchy oval strokes");
+    expect(prompt).toContain("visible arms, forearms, elbows, wrists, sleeves, crossed-arm bands");
+    expect(prompt).toContain("white arm tubes");
+    expect(prompt).toContain("shoes, footwear, boots, sneakers, sandals");
+    expect(prompt).toContain("if shoes, footwear, boots, sneakers, sandals");
+    expect(prompt).toContain("Treat mild style polish and close-but-not-exact green background as audit warnings");
+    expect(prompt).toContain("anatomy, footwear, texture");
+    expect(prompt).toContain("egg-shell texture, paper grain, pencil hatching");
+    expect(prompt).toContain("if any visible arm, forearm, elbow, wrist, sleeve, crossed-arm band");
+    expect(prompt).toContain("if Main Eggo's egg body has egg-shell texture, paper grain, pencil hatching");
+    expect(prompt).toContain("if foreground green/key-adjacent marks appear on subject matter");
+  });
+
+  test("prompt rejects impossible same-handed Eggo mittens", () => {
+    const result = parse([
+      "--scene-action", "main Eggo rests one hand on the shell while the other hand hovers over a remote console",
+      "--main-eggo-emotion", "relieved",
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected parse success");
+    const prompt = buildEggoBoldLabPrompt(result.request, []);
+
+    expect(prompt).toContain("two left hands, two right hands");
+    expect(prompt).toContain("duplicated mitten silhouettes");
+    expect(prompt).toContain("impossible palm-side duplicates");
+    expect(prompt).toContain("broken wrist flips");
+    expect(prompt).toContain("overextended floating hands");
+    expect(prompt).toContain("visible hands do not form a plausible left/right pair");
+  });
+
+  test("prompt carries the requested reaction emotion into the visual contract", () => {
+    const result = parse([
+      "--main-eggo-emotion", "skeptical",
+      "--scene-action", "main Eggo tilts sideways with folded arms while two mini-eggo robot proxies present a wobbly result card",
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected parse success");
+    const prompt = buildEggoBoldLabPrompt(result.request, []);
+
+    expect(prompt).toContain("Main Eggo is skeptical, emotionally specific, and in control");
+    expect(prompt).toContain("one skeptical arched brow");
+    expect(prompt).toContain("alarmed high-stress brows");
+    expect(prompt).toContain("exhausted drooping brows");
+    expect(prompt).toContain("embarrassed tucked brows");
   });
 
   test("prompt makes mini-eggo agents read as small Eggos with wireless robot accessories", () => {

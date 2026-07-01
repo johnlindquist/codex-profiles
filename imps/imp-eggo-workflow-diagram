@@ -1,0 +1,6 @@
+#!/usr/bin/env bun
+import { eggoWorkflowDiagramDesign } from "./imp-eggo-quality-reset.assets/contract.ts";
+import { runEggoQualityResetImp } from "./imp-eggo-quality-reset.assets/runtime.ts";
+
+runEggoQualityResetImp(eggoWorkflowDiagramDesign);
+

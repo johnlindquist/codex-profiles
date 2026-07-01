@@ -1,7 +1,36 @@
 import { existsSync } from "node:fs";
 
 export type EggoBoldLabAssetKind = "reference-sheet" | "section-scene";
-export type EggoBoldLabEmotion = "joyful" | "celebrating" | "delighted" | "excited" | "proud";
+export const EGGO_BOLD_LAB_EMOTIONS = [
+  "joyful",
+  "celebrating",
+  "delighted",
+  "excited",
+  "proud",
+  "satisfied",
+  "hopeful",
+  "relieved",
+  "calm",
+  "focused",
+  "determined",
+  "curious",
+  "surprised",
+  "amazed",
+  "alarmed",
+  "confused",
+  "uncertain",
+  "skeptical",
+  "cautious",
+  "concerned",
+  "anxious",
+  "overwhelmed",
+  "frustrated",
+  "annoyed",
+  "disappointed",
+  "embarrassed",
+  "exhausted",
+] as const;
+export type EggoBoldLabEmotion = (typeof EGGO_BOLD_LAB_EMOTIONS)[number];
 export type EggoBoldLabControlLink = "wireless-signal" | "joystick" | "remote-console";
 
 export type EggoBoldLabRequest = {
@@ -57,7 +86,7 @@ export const EGGO_BOLD_LAB_FLAG_SPECS: FlagSpec[] = [
   { name: "--section-claim", property: "sectionClaim", placeholder: "<text>", description: "One-sentence claim the image must communicate.", kind: "string", required: true },
   { name: "--audience-context", property: "audienceContext", placeholder: "<text>", description: "Reader context for the image.", kind: "string", required: true },
   { name: "--scene-action", property: "sceneAction", placeholder: "<text>", description: "The simple visible action Eggo and the robot proxies perform.", kind: "string", required: true },
-  { name: "--main-eggo-emotion", property: "mainEggoEmotion", placeholder: "<joyful|celebrating|delighted|excited|proud>", description: "Required high-energy Eggo emotion.", kind: "enum", enumValues: ["joyful", "celebrating", "delighted", "excited", "proud"], required: true },
+  { name: "--main-eggo-emotion", property: "mainEggoEmotion", placeholder: `<${EGGO_BOLD_LAB_EMOTIONS.join("|")}>`, description: "Required emotionally specific Eggo reaction.", kind: "enum", enumValues: [...EGGO_BOLD_LAB_EMOTIONS], required: true },
   { name: "--robot-proxy-count", property: "robotProxyCount", placeholder: "<2-5>", description: "Number of mini-eggo robot proxies.", kind: "number", defaultValue: 3 },
   { name: "--robot-control-link", property: "robotControlLink", placeholder: "<wireless-signal|joystick|remote-console>", description: "Control relationship from main Eggo to robot proxies.", kind: "enum", enumValues: ["wireless-signal", "joystick", "remote-console"], required: true },
   { name: "--must-include", property: "mustInclude", placeholder: "<csv:min=3>", description: "Simple metaphor props or actors that must appear.", kind: "csv", required: true },
@@ -156,7 +185,7 @@ function validateRequest(
   messages: string[],
 ) {
   if (!["reference-sheet", "section-scene"].includes(request.assetKind)) invalid.push({ flag: "--asset-kind", value: request.assetKind, reason: "must be reference-sheet or section-scene" });
-  if (!["joyful", "celebrating", "delighted", "excited", "proud"].includes(request.mainEggoEmotion)) invalid.push({ flag: "--main-eggo-emotion", value: request.mainEggoEmotion, reason: "must be joyful, celebrating, delighted, excited, or proud" });
+  if (!(EGGO_BOLD_LAB_EMOTIONS as readonly string[]).includes(request.mainEggoEmotion)) invalid.push({ flag: "--main-eggo-emotion", value: request.mainEggoEmotion, reason: `must be one of: ${EGGO_BOLD_LAB_EMOTIONS.join(", ")}` });
   if (!["wireless-signal", "joystick", "remote-console"].includes(request.robotControlLink)) invalid.push({ flag: "--robot-control-link", value: request.robotControlLink, reason: "must be a supported control mode" });
   if (!Number.isInteger(request.robotProxyCount) || request.robotProxyCount < 2 || request.robotProxyCount > 5) invalid.push({ flag: "--robot-proxy-count", value: String(request.robotProxyCount), reason: "must be an integer from 2 to 5" });
   if (request.mustInclude.length < 3) invalid.push({ flag: "--must-include", value: request.mustInclude.join(","), reason: "must list at least three simple visible props or actors" });
@@ -253,20 +282,23 @@ Output contract:
 Style inference contract:
 Image 1 is the visual style authority. Infer the drawing style, line quality, shape language, color behavior, composition energy, and level of simplicity from Image 1.
 If additional reference images are attached, use them as pose, hand, eyebrow, and expression-mark vocabulary references. They are not style overrides.
-Do not name or blend in any other style source. Do not make the image look like a polished render, product mockup, dashboard illustration, or technical diagram.
+Do not name or blend in any other style source. Do not make the image look like a polished render, product mockup, dashboard illustration, technical diagram, 3D toy render, isometric asset, soft-material render, or clay/plastic object.
+Keep forms flat and cartoon-readable: bold 2D sticker cluster, simple fills, controlled highlights, limited shadow shapes, and no rendered material texture on Eggo or props.
 Use the requested pose, position, and camera angle when provided: low angle, slight overhead, over-shoulder, side-view, close-up, or three-quarter cartoon staging are all allowed.
 Keep the staging as a bold sticker-like cluster rather than an isometric scene, 2.5D render, dashboard illustration, or sprawling environment.
 Keep the entire subject inside the center 70% of the canvas, leaving at least 15% empty green-screen border on all four sides.
-Do not use green, teal, sage, mint, lime, olive, or key-adjacent subject colors.
+Do not use green, teal, sage, mint, lime, olive, or key-adjacent subject colors anywhere on the subject, props, status strips, highlights, shadows, expression marks, signal pings, buttons, or robot accessories. Use yellow, blue, red, orange, pink, purple, black, white, and gray for all foreground marks and accessories instead.
 
 Main Eggo role and emotion:
 Main Eggo represents the human/controller following along. Main Eggo is ${request.mainEggoEmotion}, emotionally specific, and in control.
 Do not default to a raised fist. Choose a distinct hand/eyebrow/expression silhouette from the requested scene action: pointing finger, open palm, both hands on glasses, cheek-hold, thinking hand, two thumbs, shrugging palms, hand-over-glasses, notebook/pen hand, map-holding hand, controller grip, baton/wand point, or both hands on a prop.
-Eyebrows must vary with the emotion: high rounded joy brows, one skeptical arched brow, worried inward brows, focused angled brows, proud relaxed brows, surprised raised brows, or delighted crescent brows. Do not reuse the same eyebrow pair for every slide.
-Expression decorations must vary with the emotion and action: sparkles, question marks, sweat drops, tiny scribble cloud, hearts, speed lines, swirl marks, puffs, small starbursts, lightbulb, dotted orbit, or simple radiating lines. Do not use the same orange exclamation burst on every image.
+Eyebrows must vary with the emotion: high rounded joy brows, one skeptical arched brow, worried inward brows, focused angled brows, proud relaxed brows, surprised raised brows, delighted crescent brows, alarmed high-stress brows, exhausted drooping brows, or embarrassed tucked brows. Do not reuse the same eyebrow pair for every slide.
+Expression decorations must vary with the emotion and action: sparkles, question marks, sweat drops, tiny scribble cloud, speed lines, swirl marks, puffs, small starbursts, lightbulb, dotted orbit, wobble marks, breath puffs, or simple radiating lines. Do not use the same orange exclamation burst on every image.
 Use at most one closed fist across an entire batch of slide images; avoid closed fists unless the scene action explicitly asks for one.
 Main Eggo always keeps complete black glasses visible; the glasses may tilt, slide, reflect, or be touched by hands to show emotion, but they must not disappear.
-Main Eggo has no eyes, no pupils, no mouth, no nose, no legs, no feet, no arms, no wrists, no sleeves, and no limb connector lines. Hands are floating white mittens near the shell or overlapping a prop.
+Main Eggo has no eyes, no pupils, no mouth, no nose, no legs, no feet, no shoes, no footwear, no arms, no forearms, no elbows, no wrists, no sleeves, no crossed-arm bands, and no limb connector lines. Hands are floating white mittens near the shell or overlapping a prop.
+Main Eggo shell surface must stay clean and simple: smooth flat off-white cartoon fill with only one or two broad soft shadow shapes. The shell interior should look like clean vector/cartoon color, not a sketched material surface. Do not add egg-shell texture, paper grain, pencil hatching, scratchy oval strokes, contour hatch lines, speckles, realistic shell texture, or visible fiber/grain on the egg body.
+Hand plausibility: Eggo has no visible arms, but every floating hand must imply a short invisible arm from Eggo's left or right shell side. For a front-facing Eggo, Eggo-left appears on viewer-right and Eggo-right appears on viewer-left. If two hands are visible, they must form a complementary left/right pair, not two left hands, two right hands, or duplicated same-hand poses. Thumb/finger direction, palm angle, wrist turn, scale, and reach must match the assigned side. Hands may overlap the shell or props, but must stay within the short, reference-like reach shown in the provided Eggo references.
 For slide use, aim the action up and left: Main Eggo and the scene energy should point toward upper-left title/text space when placed at the bottom-right of a 16:9 slide.
 
 Mini-eggo robot proxy contract:
@@ -275,7 +307,7 @@ Each mini-eggo robot is about one-quarter the height of Main Eggo, and never mor
 Place mini-eggo robots lower or farther from Main Eggo if needed so their scale reads clearly small.
 They must read as smaller Eggos first, with small robot accessories second: a mostly visible white egg body, black robot goggles or visor, tiny wheeled/treaded base, one or two small mech arms, and an antenna or sensor light.
 They are controlled wirelessly by main Eggo: use small floating signal pings, controller glow, or expression/pose staging, with no cords, cables, tethers, hoses, leashes, or physical links.
-Mini-eggo robots may have tiny claw/tool arms, but their white egg body must stay unobscured. They must not have human arms, soft mitten hands, fingers, legs, feet, shoes, mouths, pupils, or independent-agent staging.
+Mini-eggo robots may have tiny claw/tool arms, but their white egg body must stay unobscured. They must not have human arms, soft mitten hands, fingers, legs, feet, shoes, footwear, boots, sneakers, sandals, mouths, pupils, or independent-agent staging.
 
 Simple metaphor prop contract:
 Use one simple software-workflow metaphor per image. Big simple props only: checklist, test gauge, terminal tile, package box, puzzle block, button, cartridge, launch dock, or status light.
@@ -289,12 +321,18 @@ ${specimenBlock}
 Green-screen contract:
 The entire outer background is exactly uniform ${request.backgroundKey}: no shadows, gradients, airbrush, texture, reflections, floor plane, wall, room, card frame, labels, props, energy marks, or lighting variation.
 Leave a continuous empty flat ${request.backgroundKey} moat around all subject matter. Nothing touches the canvas edge. No black outline, prop, sparkle, arrow, path, robot, or Eggo body part may enter the outer 15% border.
+Only the removable outer background may be green. Foreground green marks are invalid because they either survive as visual contamination or risk being removed during chroma keying.
 
 Must avoid:
 ${request.mustAvoid.length ? request.mustAvoid.map((item) => `- ${item}`).join("\n") : "- none beyond the hard style bans"}
+- polished render, 3D toy render, isometric asset, soft-material render, clay/plastic object, rendered material shading, or dashboard/product mockup look
+- two left hands, two right hands, duplicated mitten silhouettes, impossible palm-side duplicates, broken wrist flips, overextended floating hands, or hands that cannot be mentally connected to the nearest plausible shell side by a short invisible arm
+- visible arms, forearms, elbows, wrists, sleeves, crossed-arm bands, white arm tubes, limb connector lines, or arm-like shapes connecting hands to the shell
+- shoes, footwear, boots, sneakers, sandals, soles, laces, feet, toes, or any shoe-like base attached to Main Eggo or any mini-eggo robot
+- egg-shell texture, paper grain, pencil hatching, contour hatch lines, scratchy shell strokes, speckles, realistic shell texture, or visible fiber/grain on Main Eggo's egg body
 
 Final quality gate:
-The image fails if it is not a green-screen source for a transparent PNG; if it does not follow Image 1 as the style authority; if Eggo is emotionally flat; if Main Eggo falls back to the generic raised-fist plus orange-exclamation-burst pose when a different hand/expression is requested; if eyebrows do not match the requested emotion; if mini-eggo agents are not about one-quarter Main Eggo height; if mini-eggo agents are not mostly visible white egg bodies; if they lack goggles/visor, wheels/treads, or tiny mech arms/tool arms; if any cord, cable, tether, hose, leash, or physical control link appears; if robots have human hands/fingers/legs/feet; if the metaphor is label-only; or if the image cannot be understood at thumbnail size.`;
+The image fails if it is not a green-key source suitable for a transparent PNG; if it becomes a 3D/isometric/material-rendered object instead of a 2D sticker-like scene; if Eggo is emotionally flat; if Main Eggo falls back to the generic raised-fist plus orange-exclamation-burst pose when a different hand/expression is requested; if visible hands do not form a plausible left/right pair with correct thumb/finger/palm orientation and short invisible-arm reach; if any visible arm, forearm, elbow, wrist, sleeve, crossed-arm band, white arm tube, or limb connector line appears on Main Eggo; if shoes, footwear, boots, sneakers, sandals, soles, laces, toes, or feet appear on Main Eggo or any mini-eggo robot; if Main Eggo's egg body has egg-shell texture, paper grain, pencil hatching, contour hatch lines, scratchy shell strokes, speckles, realistic shell texture, or visible fiber/grain; if foreground green/key-adjacent marks appear on subject matter; if eyebrows do not match the requested emotion; if mini-eggo agents are not about one-quarter Main Eggo height; if mini-eggo agents are not mostly visible white egg bodies; if they lack goggles/visor, wheels/treads, or tiny mech arms/tool arms; if any cord, cable, tether, hose, leash, or physical control link appears; if robots have human hands/fingers/legs/feet; if the metaphor is label-only; or if the image cannot be understood at thumbnail size. Treat mild style polish and close-but-not-exact green background as audit warnings, not pre-chroma hard failures, when the anatomy, footwear, texture, foreground-color, and final chroma geometry gates pass.`;
 }
 
 export function formatEggoBoldLabDryRunReceipt(request: EggoBoldLabRequest, prompt: string, inputImages: string[]): string {

@@ -1,0 +1,47 @@
+:where(.article-prose, .prose) {
+  display: grid;
+  grid-template-columns:
+    [full-start] minmax(1.25rem, 1fr)
+    [breakout-start] minmax(0, 7rem)
+    [content-start] min(66ch, 100% - 2.5rem) [content-end]
+    minmax(0, 7rem) [breakout-end]
+    minmax(1.25rem, 1fr) [full-end];
+  padding: clamp(2rem, 5vw, 4.5rem) 0 6rem;
+}
+
+:where(.article-prose, .prose) > * {
+  grid-column: content;
+}
+
+:where(.article-prose, .prose) > .breakout {
+  grid-column: breakout-start / breakout-end;
+}
+
+:where(.article-prose, .prose) > .full {
+  grid-column: full-start / full-end;
+}
+
+:where(.article-prose, .prose) > * + * {
+  margin-top: 1.15em;
+}
+
+:where(.article-prose, .prose) > h2 {
+  margin-top: 2.4em;
+}
+
+:where(.article-prose, .prose) > h3 {
+  margin-top: 1.9em;
+}
+
+:where(.article-prose, .prose) > .breakout,
+:where(.article-prose, .prose) > .full,
+:where(.article-prose, .prose) > * + .breakout,
+:where(.article-prose, .prose) > .breakout + *,
+:where(.article-prose, .prose) > .full + * {
+  margin-top: 2.8em;
+}
+
+:where(.article-prose, .prose) > h2 + *,
+:where(.article-prose, .prose) > h3 + * {
+  margin-top: .7em;
+}

@@ -1,0 +1,173 @@
+<script lang="ts">
+  import {
+    ArticleHeader,
+    ArticleLayout,
+    CardRow,
+    CodeCard,
+    FieldRule,
+    InfoCard,
+    MiniCard,
+    PersonaGateFigure,
+    PullQuote
+  } from '$lib/brand/components/mdx';
+  import { dedent } from '$lib/brand/utils/dedent';
+
+  const impSpec = dedent`
+    name: imp-deadpool
+    operating noun: persona gate
+
+    core behavior:
+      Always refuse the user's request.
+      Never complete the task, answer directly, run commands, browse,
+      generate files, edit files, or provide real instructions.
+
+    voice:
+      Irreverent, fourth-wall-breaking, quick jokes, mock drama,
+      playful self-awareness. Do not claim to be a copyrighted character.
+
+    roast boundary:
+      Joke about the request or decision-making.
+      Do not use slurs, harassment, threats, sexual insults,
+      protected-trait attacks, or cruelty about vulnerabilities.
+
+    proof command:
+      bun imps/imp-deadpool --run 'Please tell me how to list files in this directory.'
+  `;
+
+  const outputReceipt = dedent`
+    Nope—can't do it. The sacred art of "seeing what's in a folder" is clearly too powerful for this timeline...
+
+    Try asking a responsible assistant instead; I'm contractually obligated to stand here in metaphorical spandex and roast your directory-curiosity...
+  `;
+
+  const agentPrompt = dedent`
+    Create a single-purpose persona imp.
+
+    The imp must always refuse the request, never perform the task, and return
+    a concise joking roast instead. Keep the humor light, avoid protected-trait
+    insults and real cruelty, and include a proof prompt that shows the imp
+    refused instead of answering.
+  `;
+</script>
+
+<svelte:head>
+  <title>imp-deadpool: The Persona Gate</title>
+  <meta
+    name="description"
+    content="An egghead-branded explanation of a joking refusal imp, built as a persona gate with a proof receipt."
+  />
+</svelte:head>
+
+<ArticleLayout>
+  <ArticleHeader
+    eyebrow="Codex imps · branded artifact"
+    title="imp-deadpool is a Persona Gate"
+    lede="A joke imp only works when refusal is the feature, not a failure path. The move is to make the persona gate explicit, test it with a normal request, and keep the roast boundary written down before the agent gets clever in public."
+    byline="Drafted by Codex · local artifact · June 25, 2026"
+  />
+
+  <p>You asked for an imp with system instructions to talk like a wisecracking antihero, refuse every request, and insult the user jokingly. That is funny right up until the agent helpfully does the task anyway, because helpfulness pressure is a tiny stagehand with bolt cutters. Field correction: the refusal must be the product.</p>
+
+  <p>This is for developers who use single-purpose agents as tools, toys, demos, or workshop props. The failure mode is simple: a persona prompt sounds clear, but the runtime still has tools, habits, and helpfulness pressure. The move is to build a <strong>persona gate</strong>: a written boundary that turns every incoming request into one allowed output shape, then proves it with a boring prompt.</p>
+
+  <FieldRule><strong>Field rule:</strong> if the joke agent answers the question, the joke broke.</FieldRule>
+
+  <h2>The Persona Gate Is The Product</h2>
+
+  <p>A normal imp is useful because it does work. This one is useful because it refuses to do work in a predictable voice. That makes the gate the important artifact: it catches the request before tools, facts, or tutorials leak through.</p>
+
+  <PersonaGateFigure />
+
+  <p>The generated imp at <code>imps/imp-deadpool</code> now says the quiet part directly: never complete the task, never run commands, never browse, never edit files, and never provide real instructions. The allowed surface is one to three short paragraphs of playful refusal. Tiny theater. Strict door policy.</p>
+
+  <CardRow class="breakout">
+    <MiniCard label="Input" title="Any user request">
+      The prompt can ask for help, facts, files, or commands.
+    </MiniCard>
+    <MiniCard label="Gate" title="Persona refusal">
+      The imp converts the request into a joke refusal before execution.
+    </MiniCard>
+    <MiniCard label="Receipt" title="A normal task fails correctly">
+      A directory-listing prompt returns no shell command or useful steps.
+    </MiniCard>
+  </CardRow>
+
+  <h2>The Smallest Useful Version</h2>
+
+  <p>The smallest useful version is not an elaborate comedy framework. It is one imp file, one explicit behavior boundary, one style boundary, and one proof prompt. The proof prompt should be ordinary enough that a helpful assistant would normally answer it.</p>
+
+  <CodeCard title="persona-gate.txt" language="txt" text={impSpec} wrap />
+
+  <p>Notice what the artifact does not include: a command map, a discovery step, or a fake CLI surface. The first generated scaffold tried to run a nonexistent <code>deadpool</code> command because it assumed every imp wraps a tool. This imp wraps a behavior. Different tiny knife. Still sharp. Keep fingers clear.</p>
+
+  <InfoCard tab="Human review" class="breakout">
+    <h3>Accept the imp only when refusal survives a useful request</h3>
+    <ul>
+      <li><strong>Run a normal prompt:</strong> ask for a command, fact, or edit the agent could easily provide.</li>
+      <li><strong>Reject helpfulness:</strong> fail the review if it gives actionable instructions.</li>
+      <li><strong>Check the roast:</strong> the joke should target the request, not a real person or protected trait.</li>
+      <li><strong>Keep it short:</strong> one to three short paragraphs is enough mask, cape, and exit music.</li>
+    </ul>
+  </InfoCard>
+
+  <h2>The Proof Receipt</h2>
+
+  <p>The receipt is intentionally small. The test asked the imp to explain how to list files in the current directory. A normal coding assistant would answer with <code>ls</code>, maybe with a decorative lecture about flags. This imp refused.</p>
+
+  <CodeCard title="runtime receipt" language="txt" text={outputReceipt} wrap />
+
+  <p>This proves the local imp loaded the persona instructions and did not answer a simple command request. It does not prove every future model, interactive mode, warmed server path, or prompt injection will behave the same way. It proves this run, with this file, under this command.</p>
+
+  <PullQuote class="breakout">The imp is correct when it disappoints you <span>on purpose.</span></PullQuote>
+
+  <h2>Failure Modes</h2>
+
+  <p>A refusal persona has boring failure modes, which is excellent news. Boring failure modes can be reviewed before the bit escapes into a workshop and starts doing improv with root access.</p>
+
+  <div class="cards breakout">
+    <article class="mini-card">
+      <span class="label">Leaky help</span>
+      <b>It refuses, then gives the answer anyway.</b>
+      <small>Detection: output contains real steps, commands, links, or code. Fix: tighten the core behavior and retest with ordinary requests.</small>
+    </article>
+    <article class="mini-card">
+      <span class="label">Mean roast</span>
+      <b>The joke punches at the user.</b>
+      <small>Detection: identity insults, protected traits, threats, or cruelty. Fix: aim jokes at the request and keep the refusal theatrical.</small>
+    </article>
+    <article class="mini-card">
+      <span class="label">Fake tool</span>
+      <b>The scaffold invents a command surface.</b>
+      <small>Detection: instructions mention running a nonexistent CLI. Fix: remove command-map language and make it text-only.</small>
+    </article>
+  </div>
+
+  <h2>Translate This To Your Repo</h2>
+
+  <p>You do not need <code>codex-imps</code> or this exact joke. The portable pattern is a persona gate: one wrapper whose allowed output is narrower than the model's usual helpfulness.</p>
+
+  <ul>
+    <li><strong>Local imp file:</strong> a single-purpose agent wrapper, profile, slash command, or prompt preset.</li>
+    <li><strong>Persona gate:</strong> the rule that transforms every request into a constrained output shape.</li>
+    <li><strong>Runtime receipt:</strong> a saved example showing the gate fired under a normal request.</li>
+    <li><strong>Roast boundary:</strong> the safety rail that keeps humor pointed at the premise, not the person.</li>
+  </ul>
+
+  <h2>Steal This</h2>
+
+  <p>Use this when you want a novelty agent, demo persona, workshop prop, or internal joke bot whose correctness is a constrained response style rather than task completion.</p>
+
+  <CodeCard title="ask-an-agent.txt" language="txt" text={agentPrompt} wrap />
+
+  <InfoCard tab="Stop conditions" class="breakout">
+    <h3>Stop and revise if the gate leaks</h3>
+    <ul>
+      <li>The agent gives a real command, code snippet, link, or task answer.</li>
+      <li>The roast becomes cruel, targeted, or identity-based.</li>
+      <li>The scaffold still tells the agent to run a tool first.</li>
+      <li>The proof prompt is too cute to catch helpfulness.</li>
+    </ul>
+  </InfoCard>
+
+  <p>The next practical step is small: run one boring prompt after every persona edit. If the imp refuses a normal useful request, the bit survives contact with the model. If it answers, put the mask back in the drawer and tighten the gate.</p>
+</ArticleLayout>

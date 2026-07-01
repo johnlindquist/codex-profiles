@@ -1,0 +1,10 @@
+#!/usr/bin/env bun
+import { runEggoSceneImp } from "./imp-eggo-scene.assets/runtime.ts";
+
+runEggoSceneImp({
+  name: "imp-eggo-tengami",
+  styleName: "Tengami",
+  styleSlug: "tengami",
+  styleReferenceImage: "tengami.jpg",
+  stylePrompt: "Generate a standalone serene ancient Japan papercraft landscape inspired by Tengami: a minimalist watercolor pop-up world with layered cut-paper mountains, folded temple architecture, sliding paper bridges, cherry blossoms, misty river paths, and hidden routes revealed through page-like folds. The scene should feel like an immersive paper world, not a book sitting somewhere.",
+});

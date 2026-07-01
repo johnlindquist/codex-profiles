@@ -1,0 +1,38 @@
+#!/usr/bin/env bun
+import { runEggoSceneImp } from "./imp-eggo-scene.assets/runtime.ts";
+
+runEggoSceneImp({
+  name: "imp-eggo-lab",
+  styleName: "Eggo Lab",
+  styleSlug: "lab",
+  styleReferenceImage: "eggo-lab-primary.png",
+  styleReferenceFirst: true,
+  eggoReferenceImages: [
+    "263-kinetic-dodge-accessibility-imagegen-clean-no-texture.png",
+    "14-proud-teacher-arm-free-imagegen-clean-no-texture.png",
+  ],
+  stylePrompt: [
+    "Angular 1960s space-age mad-science cartoon lab illustration.",
+    "Flat cel-color blocks, thick black contour lines, hard canted geometry, sharp triangular silhouettes, zigzag motion language, asymmetrical panels, and exaggerated lab machinery.",
+    "Use the supplied lab reference as the primary visual grammar source: canted trapezoid consoles, ray gauges, tube clusters, robots, warning starbursts, laser diagonals, big monitor slabs, blue control rooms, orange/yellow explosions, and graphic black shapes.",
+    "Eggo must be redesigned into this angular lab world while preserving the white egg-shell body, complete oversized black glasses, floating eyebrows, and separated white mitten hands.",
+    "Software concepts must be translated into lab hardware metaphors, not normal app UI: terminals become chunky lab consoles, browser review becomes a huge canted wall monitor, diffs become jagged readout strips, task cards become experiment trays or gauge cards, verification becomes a shield/check readout on a control panel.",
+    "Palette: saturated cyan-blue, deep blue, blue-gray, black, white, orange, red, yellow, and small lavender accents only. No green, teal, sage, mint, or key-adjacent subject colors.",
+    "Use visual grammar only; do not copy reference characters, reference text, dialogue balloons, exact four-panel layout, or any named cartoon character.",
+  ].join(" "),
+  stylePriorityPrompt: [
+    "The image must read first as an angular retro mad-science lab cartoon, not as a clean software illustration.",
+    "Required visible style tokens: at least one canted trapezoid console, one jagged starburst or laser diagonal, one chunky lab machine or robot silhouette, thick black outlines, flat cel-color shapes, and sharp asymmetric composition.",
+    "Avoid smooth rounded product-icon composition. Convert every software object into lab equipment with bolts, gauges, CRT-like screens, diagonal panels, and comic energy marks.",
+    "Eggo may remain egg-shaped, but the surrounding world and props must use hard angles, canted panels, zigzags, triangular accents, and black graphic silhouettes from the lab reference.",
+  ].join(" "),
+  styleNegativePrompt: [
+    "No generic polished vector dashboard.",
+    "No modern SaaS product illustration.",
+    "No clean rounded browser mockup as the dominant composition.",
+    "No isometric workstation.",
+    "No glossy 3D bevels, gradients, soft neumorphic panels, glassmorphism, or stock-tech illustration look.",
+    "No generic blue control-room background without angular cartoon linework.",
+    "No copied reference characters, copied reference text, speech bubbles, or exact panel layout.",
+  ].join(" "),
+});

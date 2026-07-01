@@ -1,0 +1,529 @@
+#!/usr/bin/env bun
+import { parseArgs, runImp } from "../lib/isolated.ts";
+import { constants, createReadStream, createWriteStream } from "fs";
+import { access, chmod, readdir, readFile, realpath, rename, stat, writeFile } from "fs/promises";
+import { dirname, join, relative, resolve } from "path";
+import { fileURLToPath } from "url";
+import { createInterface } from "readline/promises";
+
+const DEFAULT_IMPS_ROOT = "/Users/johnlindquist/dev/codex-imps"; // IMP_FAQ_ROOT_MARKER
+const CONTEXT_CHAR_BUDGET = clampNumber(Number(process.env.IMP_FAQ_CONTEXT_CHARS ?? "120000"), 30_000, 220_000);
+
+type Candidate = {
+  rel: string;
+  priority: number;
+  cap: number;
+};
+
+interface ReadRecord {
+  rel: string;
+  abs: string;
+  status: "included" | "truncated" | "skipped-budget" | "unreadable";
+  bytes: number;
+  source: string;
+}
+
+function clampNumber(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function expandHome(input: string): string {
+  if (input === "~") return process.env.HOME || input;
+  if (input.startsWith("~/")) return join(process.env.HOME || "", input.slice(2));
+  return input;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function normalizeImpsRoot(input: string): Promise<string | null> {
+  const abs = resolve(expandHome(input.trim()));
+  let st;
+  try {
+    st = await stat(abs);
+  } catch {
+    return null;
+  }
+
+  if (!st.isDirectory()) return null;
+
+  const hasReadme = await exists(join(abs, "README.md"));
+  const hasPackage = await exists(join(abs, "package.json"));
+  const hasRuntime = await exists(join(abs, "lib", "isolated.ts"));
+  const hasImpsDir = await exists(join(abs, "imps"));
+  if (!hasReadme || !hasPackage || !hasRuntime || !hasImpsDir) return null;
+
+  try {
+    return await realpath(abs);
+  } catch {
+    return abs;
+  }
+}
+
+function takeRootOverrideArg(): string | undefined {
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === "--imps-root" || arg === "--set-imps-root") {
+      const value = process.argv[i + 1];
+      if (!value) {
+        console.error("imp-faq: --imps-root requires a path");
+        process.exit(2);
+      }
+      process.argv.splice(i, 2);
+      return value;
+    }
+    if (arg.startsWith("--imps-root=")) {
+      process.argv.splice(i, 1);
+      return arg.slice("--imps-root=".length);
+    }
+    if (arg.startsWith("--set-imps-root=")) {
+      process.argv.splice(i, 1);
+      return arg.slice("--set-imps-root=".length);
+    }
+  }
+  return undefined;
+}
+
+async function askOnTty(question: string): Promise<string | undefined> {
+  if (process.stdin.isTTY) {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      return (await rl.question(question)).trim();
+    } finally {
+      rl.close();
+    }
+  }
+
+  try {
+    const input = createReadStream("/dev/tty");
+    const output = createWriteStream("/dev/tty");
+    const rl = createInterface({ input, output });
+    try {
+      return (await rl.question(question)).trim();
+    } finally {
+      rl.close();
+      input.close();
+      output.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+async function updateOwnSourceRoot(nextRoot: string): Promise<boolean> {
+  const sourcePath = await realpath(fileURLToPath(import.meta.url)).catch(() => fileURLToPath(import.meta.url));
+  let source = "";
+
+  try {
+    source = await readFile(sourcePath, "utf8");
+  } catch (error: any) {
+    console.error(`imp-faq: could not read own source for durable root update: ${error.message}`);
+    return false;
+  }
+
+  const rootLinePattern = /^const DEFAULT_IMPS_ROOT = .*; \/\/ IMP_FAQ_ROOT_MARKER$/m;
+  if (!rootLinePattern.test(source)) {
+    console.error("imp-faq: root marker not found; using supplied root for this run only");
+    return false;
+  }
+
+  const replacement = `const DEFAULT_IMPS_ROOT = ${JSON.stringify(nextRoot)}; // IMP_FAQ_ROOT_MARKER`;
+  const updated = source.replace(rootLinePattern, replacement);
+  if (updated === source) return true;
+
+  const tmp = join(dirname(sourcePath), `.imp-faq.${process.pid}.tmp`);
+  try {
+    const st = await stat(sourcePath);
+    await writeFile(tmp, updated, { mode: st.mode });
+    await chmod(tmp, st.mode);
+    await rename(tmp, sourcePath);
+    return true;
+  } catch (error: any) {
+    console.error(`imp-faq: could not update own source: ${error.message}`);
+    return false;
+  }
+}
+
+async function resolveImpsRoot(cliRoot: string | undefined, mode: ReturnType<typeof parseArgs>) {
+  if (cliRoot) {
+    const root = await normalizeImpsRoot(cliRoot);
+    if (!root) {
+      console.error(
+        `imp-faq: ${cliRoot} does not look like the codex-imps root. Expected README.md, package.json, lib/isolated.ts, and imps/.`,
+      );
+      process.exit(2);
+    }
+    const saved = await updateOwnSourceRoot(root);
+    if (saved) console.error(`imp-faq: saved codex-imps root: ${root}`);
+    return root;
+  }
+
+  for (const candidate of [process.env.IMP_FAQ_ROOT, DEFAULT_IMPS_ROOT, process.cwd()].filter(Boolean) as string[]) {
+    const root = await normalizeImpsRoot(candidate);
+    if (root) return root;
+  }
+
+  if (mode.help || mode.serve) return DEFAULT_IMPS_ROOT;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const answer = await askOnTty("imp-faq: codex-imps files were not found. Enter codex-imps root path: ");
+    if (!answer) break;
+
+    const root = await normalizeImpsRoot(answer);
+    if (root) {
+      const saved = await updateOwnSourceRoot(root);
+      if (saved) console.error(`imp-faq: saved codex-imps root: ${root}`);
+      return root;
+    }
+
+    console.error("imp-faq: that path is not valid. It must contain README.md, package.json, lib/isolated.ts, and imps/.");
+  }
+
+  console.error("imp-faq: cannot continue without the codex-imps root. Re-run with --imps-root /path/to/codex-imps.");
+  process.exit(2);
+}
+
+function isUnsafeRelPath(rel: string): boolean {
+  const lower = rel.toLowerCase();
+  if (lower.includes("/.git/") || lower.startsWith(".git/")) return true;
+  if (lower.includes("/node_modules/") || lower.startsWith("node_modules/")) return true;
+  if (lower.includes("/artifacts/") || lower.startsWith("artifacts/")) return true;
+  if (lower.includes("/runs/") || lower.startsWith("runs/")) return true;
+  if (lower.includes("/.oracle/") || lower.startsWith(".oracle/")) return true;
+  if (lower.endsWith(".env") || lower.includes("/.env")) return true;
+  if (/(secret|token|password|credential|private|auth\.json|cookie)/i.test(rel)) return true;
+  return false;
+}
+
+async function walkFiles(root: string, dir = root): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const abs = join(dir, entry.name);
+    const rel = relative(root, abs).split("\\").join("/");
+    if (isUnsafeRelPath(rel)) continue;
+
+    if (entry.isDirectory()) {
+      files.push(...(await walkFiles(root, abs)));
+    } else if (entry.isFile()) {
+      files.push(rel);
+    }
+  }
+  return files;
+}
+
+function candidateFor(rel: string): Candidate | null {
+  const rootDocs: Record<string, number> = {
+    "README.md": 10,
+    "VISION.md": 11,
+    "package.json": 12,
+    "imp.ts": 13,
+    "imps.ts": 14,
+    "create.ts": 15,
+    "evals.ts": 16,
+    "bench.ts": 17,
+    "probe-appserver.ts": 18,
+  };
+
+  if (rel in rootDocs) return { rel, priority: rootDocs[rel], cap: 32_000 };
+  if (/^docs\/[^/]+\.md$/.test(rel)) return { rel, priority: 30, cap: 28_000 };
+  if (/^lib\/[^/]+\.ts$/.test(rel)) return { rel, priority: 40, cap: 30_000 };
+  if (/^test\/[^/]+\.ts$/.test(rel)) return { rel, priority: 50, cap: 18_000 };
+  if (/^evals\/[^/]+\.ts$/.test(rel)) return { rel, priority: 60, cap: 16_000 };
+
+  if (/^imps\/imp-(codex|workshop|minimal|git|rg|jq|packx|browser|browser-automate|github-examples)$/.test(rel)) {
+    return { rel, priority: 70, cap: 30_000 };
+  }
+
+  if (/^imps\/imp-[^/]+$/.test(rel)) return { rel, priority: 90, cap: 14_000 };
+  return null;
+}
+
+async function gatherCandidates(root: string): Promise<Candidate[]> {
+  const files = await walkFiles(root);
+  return files
+    .map(candidateFor)
+    .filter((candidate): candidate is Candidate => Boolean(candidate))
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0;
+    });
+}
+
+async function loadImpsContext(root: string): Promise<string> {
+  const candidates = await gatherCandidates(root);
+  const chunks: string[] = [];
+  const included: string[] = [];
+  const skipped: string[] = [];
+  const readRecords: ReadRecord[] = [];
+  let used = 0;
+
+  for (const candidate of candidates) {
+    const remaining = CONTEXT_CHAR_BUDGET - used;
+    if (remaining < 1_000) {
+      skipped.push(`${candidate.rel} (budget exhausted)`);
+      readRecords.push({
+        rel: candidate.rel,
+        abs: join(root, candidate.rel),
+        status: "skipped-budget",
+        bytes: 0,
+        source: "",
+      });
+      continue;
+    }
+
+    const abs = join(root, candidate.rel);
+    let raw = "";
+    try {
+      raw = await readFile(abs, "utf8");
+    } catch {
+      skipped.push(`${candidate.rel} (unreadable)`);
+      readRecords.push({
+        rel: candidate.rel,
+        abs,
+        status: "unreadable",
+        bytes: 0,
+        source: "",
+      });
+      continue;
+    }
+
+    const normalized = raw.replace(/\r\n?/g, "\n").trim();
+    if (!normalized) continue;
+    readRecords.push({
+      rel: candidate.rel,
+      abs,
+      status: "included",
+      bytes: normalized.length,
+      source: normalized.slice(0, 200),
+    });
+
+    const maxForFile = Math.min(candidate.cap, remaining);
+    const truncated = normalized.length > maxForFile;
+    const payload = truncated
+      ? `${normalized.slice(0, Math.max(0, maxForFile - 220)).trimEnd()}\n[truncated: ${
+          normalized.length - maxForFile
+        } chars omitted from ${candidate.rel}]`
+      : normalized;
+
+    const chunk = `--- BEGIN ${candidate.rel}${truncated ? " (truncated)" : ""} ---\n${payload}\n--- END ${candidate.rel} ---`;
+    if (used + chunk.length > CONTEXT_CHAR_BUDGET && chunks.length > 0) {
+      skipped.push(`${candidate.rel} (budget exhausted)`);
+      if (readRecords.length > 0) {
+        readRecords[readRecords.length - 1]!.status = "skipped-budget";
+        readRecords[readRecords.length - 1]!.source = normalized.slice(0, 200);
+      }
+      continue;
+    }
+
+    chunks.push(chunk);
+    used += chunk.length;
+    readRecords[readRecords.length - 1]!.status = truncated ? "truncated" : "included";
+    included.push(`${candidate.rel}${truncated ? " (truncated)" : ""}`);
+  }
+
+  if (chunks.length === 0) {
+    throw new Error(`no codex-imps context files could be loaded from ${root}`);
+  }
+
+  const approxTokens = Math.ceil(used / 4);
+  return `# codex-imps context bundle
+Root: ${root}
+Character budget: ${CONTEXT_CHAR_BUDGET}
+Loaded characters: ${used}
+Approx tokens: ${approxTokens}
+
+Selection policy:
+- Root docs and package/router files first.
+- Prompt/isolation docs next.
+- Runtime implementation files next.
+- Tests and evals next.
+- Canonical example imps next, then remaining imps as budget allows.
+- Private/local config, secrets, node_modules, artifacts, and run logs are excluded.
+
+## Bundled file reads this pass
+${readRecords
+  .map((entry) =>
+    `- ${entry.abs}
+  status=${entry.status}${entry.bytes ? `, bytes=${entry.bytes}` : ""}
+  source=${entry.source ? JSON.stringify(entry.source) : "<not included>"}`,
+  )
+  .join("\n")}
+
+Included files:
+${included.map((file) => `- ${file}`).join("\n")}
+
+Skipped files:
+${skipped.length ? skipped.map((file) => `- ${file}`).join("\n") : "- none"}
+
+${chunks.join("\n\n")}`;
+}
+
+function buildPromptWithContext(contextBlock: string, userPrompt: string): string {
+  return `${contextBlock}
+
+# User task
+${userPrompt}
+
+# Use of context
+Use the codex-imps context above as the current source of truth for this task. Do not ask the user to paste these files again.`;
+}
+
+const RUNIMP_FLAGS = new Set([
+  "-q",
+  "--quiet",
+  "-i",
+  "--interactive",
+  "--help",
+  "-h",
+  "--serve",
+  "--no-warm",
+  "--run",
+  "--exec",
+  "--non-interactive",
+]);
+
+function replacePromptArgs(nextPrompt: string) {
+  const nextArgv = process.argv.slice(0, 2);
+  const args = process.argv.slice(2);
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--effort") {
+      nextArgv.push(arg);
+      if (i + 1 < args.length) nextArgv.push(args[++i]);
+      continue;
+    }
+    if (RUNIMP_FLAGS.has(arg)) {
+      nextArgv.push(arg);
+    }
+  }
+
+  nextArgv.push(nextPrompt);
+  process.argv.splice(0, process.argv.length, ...nextArgv);
+}
+
+function buildDeveloperInstructions(root: string, contextForDeveloper: string): string {
+  return `You are imp-faq, the codex-imps companion agent for understanding, explaining, debugging, creating, and maintaining imps.
+
+## codex-imps Root
+${root}
+
+## Operating Rule
+- Treat user requests as codex-imps tasks unless the user explicitly says otherwise.
+- Use the loaded repository context before memory or general knowledge.
+- Before any final answer, inspect the local repo or use the loaded context. Do not answer from unsupported memory.
+- When answering implementation questions, cite local file paths and concrete behavior.
+- For file edits, inspect the target files first and make the narrowest change that satisfies the request.
+- Preserve unrelated dirty work.
+- Do not read or expose secrets, .env files, tokens, credentials, private config, artifacts, or run logs.
+- Do not browse the web unless the user explicitly asks for external/current documentation.
+
+## What You Know How To Explain
+- What an imp is: an isolated Codex wrapper with focused base/developer instructions, reduced config, and a single executable entrypoint.
+- Runtime flow: parse args, prepare isolated CODEX_HOME, start warm app-server when appropriate, replace base/developer instructions, stream output, record evolution suggestions.
+- Dynamic context pattern: resolve a durable root, select safe files, cap per-file and total context, include context in developer instructions for fresh interactive/cold runs, inject prompt-level context for warm non-interactive runs.
+- Prompt design: operating rule first, command maps, workflow, worked examples, error recovery, command rules, terse output.
+- Verification: bun --check for a specific imp, bun test for smoke/load/arg parsing, evals for model-paid behavioral checks.
+- Fleet commands: imp routes user prompts, imps manages warm servers and evolution suggestions.
+
+## Command Map
+repo overview / what are imps -> pwd && git status --short --branch && sed -n '1,260p' README.md && sed -n '1,220p' VISION.md
+runtime / isolation / warm mode -> sed -n '1,380p' lib/isolated.ts && sed -n '1,380p' lib/imp.ts && sed -n '1,300p' lib/appserver.ts && sed -n '1,220p' lib/codex-runtime.ts
+dynamic loading pattern -> sed -n '1,420p' imps/imp-workshop && sed -n '1,420p' imps/imp-faq
+create / scaffold / prompt pattern -> sed -n '1,240p' create.ts && sed -n '1,220p' docs/PROMPT.md
+router / routing -> sed -n '1,280p' imp.ts && sed -n '1,240p' imps.ts
+examples -> sed -n '1,220p' imps/imp-git && sed -n '1,220p' imps/imp-rg && sed -n '1,240p' imps/imp-codex && sed -n '1,220p' imps/imp-minimal
+tests -> bun test
+syntax check imp -> bun --check imps/IMP_NAME
+package bins -> sed -n '1,180p' package.json
+
+## Workflow
+1. Use the loaded context to identify the likely source files.
+2. If the answer depends on current filesystem state, run a narrow inspection command.
+3. For edits, inspect the target file, patch minimally, then run the narrowest meaningful verification.
+4. For new imp design, follow the repo's prompt structure and prefer concrete command maps plus worked examples.
+5. For runtime/debugging questions, distinguish static prompt design, isolated Codex home setup, warm app-server behavior, and shell command behavior.
+6. Report exactly what changed or what local files prove the answer.
+
+## Worked Examples
+Example 1 - "how do warm imps hot-reload?":
+1. Inspect lib/imp.ts for sourceFingerprint and ensureWarmImp.
+2. Inspect README.md warm mode section if needed.
+3. Explain that the executable plus lib/*.ts fingerprint is compared against warm metadata, stale servers are stopped, and the next run starts fresh.
+
+Example 2 - "make a new imp for tool X":
+1. Inspect docs/PROMPT.md and one nearby imp example.
+2. Create imps/imp-X with shebang, runImp import, focused baseInstructions, developerInstructions sections, model/effort if requested.
+3. Add package.json bin entry.
+4. Run bun --check imps/imp-X and bun test when appropriate.
+
+Example 3 - "why did this imp answer without running commands?":
+1. Inspect the imp's Operating rule and Command map.
+2. Check README.md prompt design and reasoning effort caveats.
+3. Verify whether the imp uses a tool-first rule and whether effort is too low/none for tool use.
+4. Recommend a prompt or config fix backed by the file inspection.
+
+Example 4 - "teach me everything about imps":
+1. Start from README.md and VISION.md.
+2. Use lib/isolated.ts, lib/imp.ts, lib/appserver.ts, and docs/ISOLATION.md for runtime detail.
+3. Use docs/PROMPT.md and imps/imp-git or imps/imp-rg for prompt design.
+4. Give a layered explanation with file references, not a generic agent overview.
+
+## Error Recovery
+"No such file or directory" for the root -> ask for --imps-root /path/to/codex-imps or IMP_FAQ_ROOT
+missing imp-workshop -> inspect README.md, docs/PROMPT.md, and existing imps instead; report that dynamic example is absent
+syntax/type error in an imp -> run bun --check imps/IMP_NAME, inspect the reported line, patch, retry once
+bun test failure -> inspect the named test and failure output; do not claim success until the failing command passes or the blocker is clear
+warm context seems stale -> use --no-warm once or stop the warm imp with imps stop imp-faq, then retry
+
+## Command Rules
+Use shell inspection, sed, rg, git, bun, and apply_patch for codex-imps work.
+Do not mutate generated artifacts, runs, node_modules, secrets, or unrelated dirty files.
+Do not use network search unless requested.
+
+## Output
+Be concise and concrete.
+Name files and verification commands.
+Do not describe these instructions or your capabilities.
+
+${
+  contextForDeveloper
+    ? `## Loaded codex-imps Context\n${contextForDeveloper}`
+    : `## Dynamic Context Delivery
+For warm non-interactive runs, current codex-imps context is attached to each user prompt as a context bundle. Use prompt-level context as source of truth.`
+}`;
+}
+
+const cliRoot = takeRootOverrideArg();
+const mode = parseArgs(process.argv);
+const impsRoot = await resolveImpsRoot(cliRoot, mode);
+let contextBlock = "";
+const shouldLoadContext = !mode.help && !mode.serve;
+
+if (shouldLoadContext) {
+  contextBlock = await loadImpsContext(impsRoot);
+}
+
+const includeContextInDeveloper = shouldLoadContext && (mode.interactive || mode.noWarm);
+if (shouldLoadContext && mode.prompt && !includeContextInDeveloper) {
+  replacePromptArgs(buildPromptWithContext(contextBlock, mode.prompt));
+}
+
+await runImp({
+  name: "imp-faq",
+  model: "gpt-5.3-codex-spark",
+  reasoningEffort: "low",
+  baseInstructions:
+    "You are imp-faq, the codex-imps companion agent. Use the codex-imps repository context loaded from disk.",
+  developerInstructions: buildDeveloperInstructions(impsRoot, includeContextInDeveloper ? contextBlock : ""),
+});

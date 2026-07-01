@@ -1,0 +1,205 @@
+.byline {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  color: var(--ink-soft);
+  font-size: .95rem;
+  font-weight: 760;
+}
+
+.rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line), transparent);
+}
+
+.field-rule {
+  position: relative;
+  width: fit-content;
+  max-width: min(32rem, 100%);
+  margin-inline: auto;
+  padding: 1.25rem 1.6rem 1.1rem;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fbefa9, #f3df7e);
+  box-shadow: 0 1px 2px rgba(120, 90, 30, .15), 0 9px 18px -4px rgba(120, 90, 30, .35);
+  color: #1e2a38;
+  font-family: "Caveat", cursive;
+  font-size: 1.55rem;
+  line-height: 1.18;
+  transform: rotate(-.7deg);
+}
+
+.field-rule::before {
+  content: "";
+  position: absolute;
+  top: -.8rem;
+  left: 50%;
+  width: 6.5rem;
+  height: 1.2rem;
+  transform: translateX(-50%) rotate(-1.5deg);
+  background: rgba(232, 217, 168, .85);
+  box-shadow: 0 2px 6px rgba(120, 90, 30, .14);
+}
+
+.field-rule strong {
+  color: var(--rust);
+  font-weight: 700;
+}
+
+.sticky {
+  position: relative;
+  width: min(300px, 100%);
+  margin-left: auto;
+  padding: 1.25rem 1.1rem 1rem;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fbefa9, #f3df7e);
+  box-shadow: 0 1px 2px rgba(120, 90, 30, .15), 0 8px 16px -4px rgba(120, 90, 30, .35);
+  color: #1e2a38;
+  font-family: "Caveat", cursive;
+  font-size: 1.6rem;
+  line-height: 1.05;
+  transform: rotate(1.5deg);
+}
+
+.sticky::before {
+  content: "";
+  position: absolute;
+  top: -.85rem;
+  left: 50%;
+  width: 7rem;
+  height: 1.2rem;
+  transform: translateX(-50%) rotate(-1deg);
+  background: rgba(232, 217, 168, .8);
+  box-shadow: 0 2px 6px rgba(120, 90, 30, .12);
+}
+
+.pull {
+  color: var(--ink);
+  font-size: clamp(1.5rem, 1.4vw + 1.2rem, 2.15rem);
+  font-weight: 900;
+  line-height: 1.22;
+  text-align: center;
+}
+
+.pull span {
+  color: var(--rust);
+}
+
+.info-card {
+  position: relative;
+  padding: 1.9rem 1.5rem 1.4rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--card-top), var(--card-bottom));
+  box-shadow: var(--shadow-card);
+}
+
+.prose > .info-card {
+  margin-top: 3.7em;
+}
+
+.info-card::before {
+  content: attr(data-tab);
+  position: absolute;
+  top: -1.35rem;
+  left: 1.2rem;
+  padding: .5rem .9rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffaf0, var(--shell));
+  box-shadow: 0 5px 0 rgba(120, 90, 30, .14);
+  font-size: .78rem;
+  font-weight: 1000;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.info-card h3 {
+  margin-bottom: .4rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+.mini-card {
+  padding: 1.05rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--cream);
+  box-shadow: 0 9px 18px rgba(30, 42, 56, .09);
+}
+
+.mini-card b {
+  display: block;
+  line-height: 1.25;
+}
+
+.mini-card small {
+  display: block;
+  margin-top: .4rem;
+  color: var(--ink-soft);
+  font-size: .86rem;
+  font-weight: 760;
+}
+
+.label {
+  display: inline-flex;
+  margin-bottom: .55rem;
+  padding: .28rem .55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--shell);
+  color: var(--rust);
+  font-size: .72rem;
+  font-weight: 1000;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.code-card {
+  overflow: hidden;
+  border: 1px solid #0d1722;
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--navy-top), var(--navy-bottom));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 14px 30px rgba(30, 42, 56, .2);
+}
+
+.code-card .bar {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .6rem .85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.code-card .bar i {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+}
+
+.code-card .bar .fn {
+  margin-left: .5rem;
+  color: #9ab0c8;
+  font-family: ui-monospace, monospace;
+  font-size: .78rem;
+  font-weight: 760;
+}
+
+.code-card pre {
+  margin: 0;
+  padding: 1.05rem 1.15rem;
+  overflow: auto;
+  color: #fff7df;
+  font-size: .9rem;
+  line-height: 1.6;
+}
+
+.prose > .code-card {
+  width: 100%;
+  max-width: 66ch;
+  justify-self: center;
+}

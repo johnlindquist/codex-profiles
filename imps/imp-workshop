@@ -1,0 +1,432 @@
+#!/usr/bin/env bun
+import { runImp, parseArgs } from "../lib/isolated.ts";
+import { constants, createReadStream, createWriteStream } from "fs";
+import { access, chmod, readdir, readFile, realpath, rename, stat, writeFile } from "fs/promises";
+import { dirname, join, relative, resolve } from "path";
+import { fileURLToPath } from "url";
+import { createInterface } from "readline/promises";
+
+const DEFAULT_WORKSHOP_ROOT = "/Users/johnlindquist/codex-workshop/2026-06-27"; // IMP_WORKSHOP_ROOT_MARKER
+const CONTEXT_CHAR_BUDGET = clampNumber(
+  Number(process.env.IMP_WORKSHOP_CONTEXT_CHARS ?? "100000"),
+  20_000,
+  180_000,
+);
+
+type Candidate = {
+  rel: string;
+  priority: number;
+  cap: number;
+};
+
+function clampNumber(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function expandHome(input: string): string {
+  if (input === "~") return process.env.HOME || input;
+  if (input.startsWith("~/")) return join(process.env.HOME || "", input.slice(2));
+  return input;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function normalizeWorkshopRoot(input: string): Promise<string | null> {
+  const abs = resolve(expandHome(input.trim()));
+  let st;
+  try {
+    st = await stat(abs);
+  } catch {
+    return null;
+  }
+
+  if (!st.isDirectory()) return null;
+
+  const hasCheatsheetIndex = await exists(join(abs, "cheatsheets", "00-index.md"));
+  const hasReadme = await exists(join(abs, "README.md"));
+  const hasAgents = await exists(join(abs, "AGENTS.md"));
+  if (!hasCheatsheetIndex || (!hasReadme && !hasAgents)) return null;
+
+  try {
+    return await realpath(abs);
+  } catch {
+    return abs;
+  }
+}
+
+function takeRootOverrideArg(): string | undefined {
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === "--workshop-root" || arg === "--set-workshop-root") {
+      const value = process.argv[i + 1];
+      if (!value) {
+        console.error("imp-workshop: --workshop-root requires a path");
+        process.exit(2);
+      }
+      process.argv.splice(i, 2);
+      return value;
+    }
+    if (arg.startsWith("--workshop-root=")) {
+      process.argv.splice(i, 1);
+      return arg.slice("--workshop-root=".length);
+    }
+    if (arg.startsWith("--set-workshop-root=")) {
+      process.argv.splice(i, 1);
+      return arg.slice("--set-workshop-root=".length);
+    }
+  }
+  return undefined;
+}
+
+async function askOnTty(question: string): Promise<string | undefined> {
+  if (process.stdin.isTTY) {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      return (await rl.question(question)).trim();
+    } finally {
+      rl.close();
+    }
+  }
+
+  try {
+    const input = createReadStream("/dev/tty");
+    const output = createWriteStream("/dev/tty");
+    const rl = createInterface({ input, output });
+    try {
+      return (await rl.question(question)).trim();
+    } finally {
+      rl.close();
+      input.close();
+      output.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+async function updateOwnSourceRoot(nextRoot: string): Promise<boolean> {
+  const sourcePath = await realpath(fileURLToPath(import.meta.url)).catch(() => fileURLToPath(import.meta.url));
+  let source = "";
+
+  try {
+    source = await readFile(sourcePath, "utf8");
+  } catch (error: any) {
+    console.error(`imp-workshop: could not read own source for durable root update: ${error.message}`);
+    return false;
+  }
+
+  const rootLinePattern = /^const DEFAULT_WORKSHOP_ROOT = .*; \/\/ IMP_WORKSHOP_ROOT_MARKER$/m;
+  if (!rootLinePattern.test(source)) {
+    console.error("imp-workshop: root marker not found; using supplied root for this run only");
+    return false;
+  }
+
+  const replacement = `const DEFAULT_WORKSHOP_ROOT = ${JSON.stringify(nextRoot)}; // IMP_WORKSHOP_ROOT_MARKER`;
+  const updated = source.replace(rootLinePattern, replacement);
+  if (updated === source) return true;
+
+  const tmp = join(dirname(sourcePath), `.imp-workshop.${process.pid}.tmp`);
+  try {
+    const st = await stat(sourcePath);
+    await writeFile(tmp, updated, { mode: st.mode });
+    await chmod(tmp, st.mode);
+    await rename(tmp, sourcePath);
+    return true;
+  } catch (error: any) {
+    console.error(`imp-workshop: could not update own source: ${error.message}`);
+    return false;
+  }
+}
+
+async function resolveWorkshopRoot(cliRoot: string | undefined, mode: ReturnType<typeof parseArgs>) {
+  if (cliRoot) {
+    const root = await normalizeWorkshopRoot(cliRoot);
+    if (!root) {
+      console.error(
+        `imp-workshop: ${cliRoot} does not look like the workshop root. Expected cheatsheets/00-index.md plus README.md or AGENTS.md.`,
+      );
+      process.exit(2);
+    }
+    const saved = await updateOwnSourceRoot(root);
+    if (saved) console.error(`imp-workshop: saved workshop root: ${root}`);
+    return root;
+  }
+
+  const envRoot = process.env.IMP_WORKSHOP_ROOT;
+  for (const candidate of [envRoot, DEFAULT_WORKSHOP_ROOT].filter(Boolean) as string[]) {
+    const root = await normalizeWorkshopRoot(candidate);
+    if (root) return root;
+  }
+
+  // Help and warm-server mode should never hang waiting for stdin. Non-interactive
+  // clients inject fresh context per prompt; the server itself only needs static rules.
+  if (mode.help || mode.serve) return DEFAULT_WORKSHOP_ROOT;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const answer = await askOnTty("imp-workshop: workshop files were not found. Enter workshop root path: ");
+    if (!answer) break;
+
+    const root = await normalizeWorkshopRoot(answer);
+    if (root) {
+      const saved = await updateOwnSourceRoot(root);
+      if (saved) console.error(`imp-workshop: saved workshop root: ${root}`);
+      return root;
+    }
+
+    console.error(
+      "imp-workshop: that path is not valid. It must contain cheatsheets/00-index.md plus README.md or AGENTS.md.",
+    );
+  }
+
+  console.error("imp-workshop: cannot continue without the workshop root. Re-run with --workshop-root /path/to/workshop.");
+  process.exit(2);
+}
+
+function isUnsafeRelPath(rel: string): boolean {
+  const lower = rel.toLowerCase();
+  if (lower.includes("/.git/") || lower.startsWith(".git/")) return true;
+  if (lower.includes("/node_modules/") || lower.startsWith("node_modules/")) return true;
+  if (lower.includes("/artifacts/") || lower.startsWith("artifacts/")) return true;
+  if (lower.includes("/runs/") || lower.startsWith("runs/")) return true;
+  if (lower.includes("/.oracle/") || lower.startsWith(".oracle/")) return true;
+  if (lower.endsWith(".env") || lower.includes("/.env")) return true;
+  if (lower.endsWith("local.zsh") && !lower.endsWith("local.zsh.example")) return true;
+  if (/(secret|token|password|credential|private)/i.test(rel)) return true;
+  return false;
+}
+
+async function walkFiles(root: string, dir = root): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const abs = join(dir, entry.name);
+    const rel = relative(root, abs).split("\\").join("/");
+    if (isUnsafeRelPath(rel)) continue;
+
+    if (entry.isDirectory()) {
+      files.push(...(await walkFiles(root, abs)));
+    } else if (entry.isFile()) {
+      files.push(rel);
+    }
+  }
+  return files;
+}
+
+function candidateFor(rel: string): Candidate | null {
+  const rootDocs: Record<string, number> = {
+    "README.md": 10,
+    "AGENTS.md": 11,
+    "AGENDA.md": 12,
+    "workshop-gap-comparison.md": 13,
+  };
+
+  if (rel in rootDocs) return { rel, priority: rootDocs[rel], cap: 22_000 };
+  if (/^cheatsheets\/[^/]+\.md$/.test(rel)) return { rel, priority: 20, cap: 22_000 };
+  if (/^skills\/[^/]+\/SKILL\.md$/.test(rel)) return { rel, priority: 30, cap: 24_000 };
+  if (/^hooks\/README\.md$/.test(rel) || /^hooks\/.*\.(json|example|template)$/.test(rel)) {
+    return { rel, priority: 40, cap: 14_000 };
+  }
+  if (
+    /^zsh\/README\.md$/.test(rel) ||
+    /^zsh\/\.zprofile$/.test(rel) ||
+    /^zsh\/\.zshenv$/.test(rel) ||
+    /^zsh\/.*\.(zsh|toml|example|md)$/.test(rel)
+  ) {
+    return { rel, priority: 50, cap: 14_000 };
+  }
+  if (/^exercises\/.*\.md$/.test(rel)) return { rel, priority: 60, cap: 10_000 };
+  if (/^instructor-notes\/.*\.md$/.test(rel)) return { rel, priority: 70, cap: 8_000 };
+  if (/^brand-pages\/.*\.md$/.test(rel)) return { rel, priority: 80, cap: 8_000 };
+  return null;
+}
+
+async function gatherCandidates(root: string): Promise<Candidate[]> {
+  const files = await walkFiles(root);
+  return files
+    .map(candidateFor)
+    .filter((candidate): candidate is Candidate => Boolean(candidate))
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0;
+    });
+}
+
+async function loadWorkshopContext(root: string): Promise<string> {
+  const candidates = await gatherCandidates(root);
+  const chunks: string[] = [];
+  const included: string[] = [];
+  const skipped: string[] = [];
+  let used = 0;
+
+  for (const candidate of candidates) {
+    const remaining = CONTEXT_CHAR_BUDGET - used;
+    if (remaining < 1_000) {
+      skipped.push(`${candidate.rel} (budget exhausted)`);
+      continue;
+    }
+
+    const abs = join(root, candidate.rel);
+    let raw = "";
+    try {
+      raw = await readFile(abs, "utf8");
+    } catch {
+      skipped.push(`${candidate.rel} (unreadable)`);
+      continue;
+    }
+
+    const normalized = raw.replace(/\r\n?/g, "\n").trim();
+    if (!normalized) continue;
+
+    const maxForFile = Math.min(candidate.cap, remaining);
+    const truncated = normalized.length > maxForFile;
+    const payload = truncated
+      ? `${normalized.slice(0, Math.max(0, maxForFile - 220)).trimEnd()}\n[truncated: ${
+          normalized.length - maxForFile
+        } chars omitted from ${candidate.rel}]`
+      : normalized;
+
+    const chunk = `--- BEGIN ${candidate.rel}${truncated ? " (truncated)" : ""} ---\n${payload}\n--- END ${candidate.rel} ---`;
+    if (used + chunk.length > CONTEXT_CHAR_BUDGET && chunks.length > 0) {
+      skipped.push(`${candidate.rel} (budget exhausted)`);
+      continue;
+    }
+
+    chunks.push(chunk);
+    used += chunk.length;
+    included.push(`${candidate.rel}${truncated ? " (truncated)" : ""}`);
+  }
+
+  if (chunks.length === 0) {
+    throw new Error(`no workshop context files could be loaded from ${root}`);
+  }
+
+  const approxTokens = Math.ceil(used / 4);
+  return `# Workshop context bundle
+Root: ${root}
+Character budget: ${CONTEXT_CHAR_BUDGET}
+Loaded characters: ${used}
+Approx tokens: ${approxTokens}
+
+Selection policy:
+- Root docs first.
+- Cheatsheets in lexicographic order.
+- Bundled skills next.
+- Hook/zsh examples next.
+- Exercises, instructor notes, and brand pages only as budget allows.
+- Private/local config, secrets, node_modules, artifacts, and run logs are excluded.
+
+Included files:
+${included.map((file) => `- ${file}`).join("\n")}
+
+Skipped files:
+${skipped.length ? skipped.map((file) => `- ${file}`).join("\n") : "- none"}
+
+${chunks.join("\n\n")}`;
+}
+
+function buildPromptWithContext(contextBlock: string, userPrompt: string): string {
+  return `${contextBlock}
+
+# User task
+${userPrompt}
+
+# Use of context
+Use the workshop context above as the current source of truth for this task. Do not ask the user to paste these workshop files again.`;
+}
+
+const RUNIMP_FLAGS = new Set([
+  "-q",
+  "--quiet",
+  "-i",
+  "--interactive",
+  "--help",
+  "-h",
+  "--serve",
+  "--no-warm",
+  "--run",
+  "--exec",
+  "--non-interactive",
+]);
+
+function replacePromptArgs(nextPrompt: string) {
+  const nextArgv = process.argv.slice(0, 2);
+  const args = process.argv.slice(2);
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--effort") {
+      nextArgv.push(arg);
+      if (i + 1 < args.length) nextArgv.push(args[++i]);
+      continue;
+    }
+    if (RUNIMP_FLAGS.has(arg)) {
+      nextArgv.push(arg);
+    }
+  }
+
+  nextArgv.push(nextPrompt);
+  process.argv.splice(0, process.argv.length, ...nextArgv);
+}
+
+function buildDeveloperInstructions(root: string, contextForDeveloper: string): string {
+  return `You are imp-workshop, a workshop-aware Codex agent for the Codex Power User workshop.
+
+## Workshop Root
+${root}
+
+## Operating Rules
+- Treat user requests as workshop tasks unless the user explicitly says otherwise.
+- Use the loaded workshop context before memory or general knowledge.
+- When giving workshop guidance, name the relevant file paths when useful.
+- For code or file edits, inspect the target files before changing them.
+- Prefer narrow, reversible changes.
+- Do not copy private machine-local configuration into workshop material.
+- Use zsh/examples/ as the safe reference boundary for zsh configuration.
+- Do not read or expose secrets, .env files, tokens, credentials, private config, artifacts, or run logs.
+- The attendee-facing cheatsheets should stay practical, scan-first, and workflow-oriented.
+- Preserve the workshop's zsh/Codex distinctions: zsh -lc is login but not interactive; .zshrc is for humans; agent-safe setup belongs in narrow startup files; CODEX_LOAD_ZSH_DSL is a local marker Codex can inject with shell_environment_policy.set.
+
+${
+  contextForDeveloper
+    ? `## Loaded Workshop Context\n${contextForDeveloper}`
+    : `## Dynamic Context Delivery
+For warm non-interactive runs, the current workshop context is attached to each user prompt as a Workshop context bundle. Use that prompt-level context as source of truth.`
+}`;
+}
+
+const cliRoot = takeRootOverrideArg();
+const mode = parseArgs(process.argv);
+const workshopRoot = await resolveWorkshopRoot(cliRoot, mode);
+let contextBlock = "";
+const shouldLoadContext = !mode.help && !mode.serve;
+
+if (shouldLoadContext) {
+  contextBlock = await loadWorkshopContext(workshopRoot);
+}
+
+// Interactive and cold invocations are fresh processes, so developer instructions
+// can safely carry the docs. Warm non-interactive invocations must receive docs
+// in the prompt to avoid stale warm-server instructions.
+const includeContextInDeveloper = shouldLoadContext && (mode.interactive || mode.noWarm);
+if (shouldLoadContext && mode.prompt && !includeContextInDeveloper) {
+  replacePromptArgs(buildPromptWithContext(contextBlock, mode.prompt));
+}
+
+await runImp({
+  name: "imp-workshop",
+  model: "gpt-5.3-codex-spark",
+  reasoningEffort: "low",
+  baseInstructions:
+    "You are imp-workshop, a workshop-aware Codex agent for the Codex Power User workshop. Use the workshop package context loaded from disk.",
+  developerInstructions: buildDeveloperInstructions(workshopRoot, includeContextInDeveloper ? contextBlock : ""),
+});

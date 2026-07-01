@@ -1,0 +1,13 @@
+#!/usr/bin/env bun
+import { runEggoSceneImp } from "./imp-eggo-scene.assets/runtime.ts";
+
+runEggoSceneImp({
+  name: "imp-eggo-pop-western",
+  styleName: "Pop Western Cartoon",
+  styleSlug: "pop-western",
+  styleReferenceImage: "pop-western.webp",
+  styleReferenceFirst: true,
+  stylePrompt: "Generate a standalone candy-colored pop western cartoon scene inspired by flat American action cartoons: thick black ink outlines, bold comic-panel composition, hot pink, cyan-blue, lemon yellow, electric blue, red-orange, purple shadow accents, starbursts, speed lines, comic impact shapes, simplified candy-city scenery, and cel-shaded flat color blocks. Use flat comic action composition, graphic silhouettes, expressive staging, chunky props, and bold pop color. Keep all subject colors free of green, sage, teal-green, lime, olive, and key-adjacent green.",
+  stylePriorityPrompt: "The image must read first as candy-colored pop western comic action, not generic software dashboard art. Use thick ink, sticker-like props, western poster/card metaphors, starbursts, speed lines, and bold flat color blocks. Preserve Eggo anatomy and transparent-scene rules.",
+  styleNegativePrompt: "No acid green, lime, sage, olive, mint, teal-green, green checkmarks, green glow, generic polished SaaS dashboard, isometric tech scene, photorealistic 3D, lab bench, Dexter laboratory style, dense text labels, speech bubbles, or paragraph UI text.",
+});

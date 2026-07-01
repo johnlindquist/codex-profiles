@@ -1,0 +1,13 @@
+Launching browser mode (gemini-create-video) with ~534 tokens.
+This run can take up to an hour (usually ~10 minutes).
+[browser] [video] captured 1 generated video
+Answer:
+Gemini said Your video is ready! 0:00 / 0:10
+
+1m04s · gemini-create-video[browser] · ↑534 ↓11 ↻0 Δ545
+Answer:
+Gemini said Your video is ready! 0:00 / 0:10
+Saved 1 generated video to /Users/johnlindquist/.oracle/sessions/imp-explainer-video/videos
+
+Generated videos:
+- /Users/johnlindquist/.oracle/sessions/imp-explainer-video/videos/video.mp4
