@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 
 export type EvolutionSeverity = "low" | "medium" | "high";
 export type EvolutionState = "pending" | "applied" | "dismissed";
-export type EvolutionUserSignal = "disappointed";
+export type EvolutionUserSignal = "disappointed" | "review_requested";
 
 export interface EvolutionPromptSignal {
   modelPrompt: string;
@@ -14,6 +14,38 @@ export interface EvolutionPromptSignal {
   userSignal?: EvolutionUserSignal;
   userFeedback?: string;
 }
+
+export interface EvolutionPromptActionOptions {
+  impSourcePath?: string;
+}
+
+export type EvolutionPromptAction =
+  | { kind: "none" }
+  | {
+    kind: "block";
+    reason: string;
+    originalPrompt: string;
+    modelPrompt?: string;
+    userFeedback?: string;
+    userSignal?: EvolutionUserSignal;
+  }
+  | {
+    kind: "evolve";
+    reason: string;
+    originalPrompt: string;
+    modelPrompt: string;
+    brief: string;
+    immediate: true;
+    context: string;
+  }
+  | {
+    kind: "context";
+    context: string;
+    originalPrompt: string;
+    modelPrompt?: string;
+    userFeedback: string;
+    userSignal: EvolutionUserSignal;
+  };
 
 export interface EvolutionSuggestion {
   schema: 1;
@@ -91,24 +123,93 @@ export interface EvolutionObserver {
   finish(extra: { status: string; transport: string; finalText?: string; threadId?: string; turnId?: string }): void;
 }
 
-export function parseEvolutionPromptSignal(prompt: string): EvolutionPromptSignal {
-  if (!prompt.startsWith("+")) return { modelPrompt: prompt, originalPrompt: prompt };
-  const newline = prompt.search(/\r?\n/);
-  if (newline === -1) {
+export function parseCaretEvolutionBrief(prompt: string): string | undefined {
+  const match = prompt.match(/^[ \t]*\^(?:[ \t]+([\s\S]*)|\r?\n([\s\S]*)|[ \t]*$)/);
+  if (!match) return undefined;
+  return (match[1] ?? match[2] ?? "").trim();
+}
+
+export function parseEvolutionPromptAction(prompt: string, opts: EvolutionPromptActionOptions = {}): EvolutionPromptAction {
+  const caretBrief = parseCaretEvolutionBrief(prompt);
+  if (caretBrief !== undefined) {
+    const maintainerInstruction = caretBrief || "Review the current imp behavior and ask what to evolve if the maintainer intent is unclear.";
+    const sourceLine = opts.impSourcePath?.trim()
+      ? `Target imp source path: ${opts.impSourcePath.trim()}`
+      : "Target imp source path: unknown; identify this imp's executable/source before editing.";
+    const context = [
+      "Imp Evolution instructions:",
+      "The user started this turn with ^. This is an inline imp evolution turn, not a normal task for the imp's target domain.",
+      sourceLine,
+      "",
+      "Hard boundary:",
+      "Evolve only this specific imp. Do not modify the user's project files, task files, generated output, slides, app code, repository content unrelated to this imp, or any domain artifact the imp normally works on.",
+      "The maintainer instruction after ^ is about improving this imp itself. It is not permission to perform the user's normal task.",
+      "",
+      "Primary target:",
+      "Default to editing this imp's own prompt/instructions only: base instructions, developer instructions, embedded context rules, command maps, workflow rules, examples, error-recovery guidance, and response behavior.",
+      "Treat prompt/instruction edits as the expected solution. Before changing anything else, inspect the target imp source and decide whether a prompt/instruction change can satisfy the maintainer instruction.",
+      "",
+      "Narrow exception:",
+      "Touch non-prompt imp-owned files only when the requested evolution cannot be satisfied by prompt/instruction changes alone.",
+      "Non-prompt edits must stay inside this imp's own source/config/docs/tests. Touch shared imp runtime only when the defect is genuinely shared across imps, and explain why the change is shared-runtime work instead of this-imp prompt work.",
+      "Do not redesign evolution machinery, routing, hooks, CLI behavior, storage, or tests unless the maintainer instruction specifically requires it and prompt edits cannot solve it.",
+      "",
+      "Required workflow:",
+      "1. Inspect the target imp source path before editing.",
+      "2. Identify the smallest prompt/instruction change that addresses the maintainer instruction.",
+      "3. Preserve unrelated dirty work.",
+      "4. Keep edits scoped to this imp's owned surface.",
+      "5. Run focused verification when files change.",
+      "6. In the final response, list the exact files changed, say whether the change was prompt-only or explain why it was not, and report exact verification commands/results.",
+      "",
+      "Do not mark evolution suggestions applied or dismissed unless the user explicitly asks.",
+      `Maintainer instruction: ${maintainerInstruction}`,
+    ].join("\n");
     return {
-      modelPrompt: "",
+      kind: "evolve",
+      reason: "Loaded inline imp evolution instructions.",
       originalPrompt: prompt,
-      userSignal: "disappointed",
-      userFeedback: prompt.slice(1).trim(),
+      modelPrompt: caretBrief,
+      brief: caretBrief,
+      immediate: true,
+      context,
     };
   }
-  const line = prompt.slice(0, newline);
-  const newlineLength = prompt[newline] === "\r" && prompt[newline + 1] === "\n" ? 2 : 1;
+
+  if (!prompt.startsWith("+")) return { kind: "none" };
+
+  const newline = prompt.search(/\r?\n/);
+  const line = newline === -1 ? prompt : prompt.slice(0, newline);
+  const newlineLength = newline !== -1 && prompt[newline] === "\r" && prompt[newline + 1] === "\n" ? 2 : 1;
+  const feedback = line.slice(1).trim();
+  const modelPrompt = newline === -1 ? "" : prompt.slice(newline + newlineLength).replace(/^\r?\n/, "");
+
+  if (!feedback) {
+    return {
+      kind: "block",
+      reason: "Add feedback after +, for example '+missed the slide bundle context'.",
+      originalPrompt: prompt,
+    };
+  }
+
+  const context = modelPrompt.trim()
+    ? [
+        "The user marked this turn for imp evolution review with a leading + feedback line.",
+        "Treat the first line as feedback for the imp maintainer, not as the task.",
+        "Answer the remaining prompt normally.",
+      ].join(" ")
+    : [
+        "The user marked this turn for imp evolution review with a leading + feedback line.",
+        "This prompt contains feedback only; record it as maintainer feedback, not as a task to execute.",
+      ].join(" ");
+
   return {
-    modelPrompt: prompt.slice(newline + newlineLength).replace(/^\r?\n/, ""),
+    kind: "context",
+    context,
     originalPrompt: prompt,
+    modelPrompt: modelPrompt || undefined,
+    userFeedback: feedback,
     userSignal: "disappointed",
-    userFeedback: line.slice(1).trim(),
   };
 }
 
@@ -238,6 +339,73 @@ export function appendStabilization(summary: StabilizationSummary): boolean {
   appendFileSync(file, JSON.stringify(summary) + "\n", "utf8");
   writeEvolutionStatus(summary.imp);
   return true;
+}
+
+export function recordUserEvolutionSignal(input: {
+  imp: string;
+  originalPrompt: string;
+  userFeedback: string;
+  modelPrompt?: string;
+  sessionId?: string;
+  turnId?: string;
+  transcriptPath?: string;
+  cwd?: string;
+  userSignal?: EvolutionUserSignal;
+  dedupeScope?: string;
+  now?: Date;
+}): boolean {
+  const now = input.now || new Date();
+  const modelPrompt = input.modelPrompt === undefined ? input.originalPrompt : input.modelPrompt;
+  const userSignal = input.userSignal ?? "disappointed";
+  const evidencePrefix = userSignal === "review_requested"
+    ? "user requested imp evolution review"
+    : "user marked this turn for evolution";
+  const telemetry: EvolutionTelemetry = {
+    imp: input.imp,
+    prompt: redactSecrets(modelPrompt),
+    originalPrompt: redactSecrets(input.originalPrompt),
+    userSignal,
+    userFeedback: redactSecrets(input.userFeedback),
+    finalText: "",
+    threadId: input.sessionId,
+    turnId: input.turnId,
+    transport: "hook:user-prompt-submit",
+    status: "user-feedback",
+    startedAt: now.toISOString(),
+    completedAt: now.toISOString(),
+    events: [
+      {
+        type: "hook.user_prompt_submit",
+        cwd: input.cwd,
+      },
+    ],
+  };
+  const eventLogPath = writeSessionLog(telemetry);
+  const created_at = now.toISOString();
+  const suggestion: EvolutionSuggestion = {
+    schema: 1,
+    id: "",
+    imp: input.imp,
+    thread_id: input.sessionId,
+    turn_id: input.turnId,
+    transcript_path: input.transcriptPath,
+    event_log_path: eventLogPath,
+    created_at,
+    score: 65,
+    benchmark: 85,
+    severity: "medium",
+    dedupe_key: stableHash([input.imp, "user-signal", userSignal, input.userFeedback, modelPrompt.slice(0, 240), input.dedupeScope ?? ""]),
+    recommendation: "Review this session for a prompt, command map, workflow, or error-recovery improvement.",
+    evidence: [
+      input.userFeedback
+        ? `${evidencePrefix}: ${input.userFeedback}`
+        : evidencePrefix,
+    ].map(redactSecrets),
+    new_imp_candidate: null,
+    state: "pending",
+  };
+  suggestion.id = suggestionId(suggestion);
+  return appendEvolutionSuggestion(suggestion);
 }
 
 export function writeSessionLog(telemetry: EvolutionTelemetry): string {

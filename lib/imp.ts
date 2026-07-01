@@ -23,7 +23,6 @@ import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { spawn } from "child_process";
 import type { ImpConfig } from "./isolated.ts";
-import type { EvolutionPromptSignal } from "./evolution.ts";
 import { AppServerClient } from "./appserver.ts";
 import { impReadyTimeoutMs } from "./defaults.ts";
 
@@ -33,7 +32,6 @@ type WarmImpRequest = {
   cwd: string;
   effort?: string;
   turnTimeoutMs?: number;
-  promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback">;
 };
 
 export function socketPath(name: string): string {
@@ -206,7 +204,7 @@ export async function serveImp(config: ImpConfig): Promise<void> {
                 if (!req.quiet) send({ type: "notif", method, params });
               },
             },
-            { cwd: req.cwd, effort: req.effort, turnTimeoutMs: req.turnTimeoutMs, promptSignal: req.promptSignal },
+            { cwd: req.cwd, effort: req.effort, turnTimeoutMs: req.turnTimeoutMs },
           );
           send({ type: "final", text: finalText });
           send({ type: "done" });

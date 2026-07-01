@@ -148,7 +148,8 @@ Usage:
   imp <prompt>            route by keywords and run the matching imp
   imp <tool> <prompt>     explicit: imp git "...", imp jq "..." (no guessing)
   imp "<a>; then <b>"     compound: each segment runs on its own imp, in order
-  imp evolve <name>       review pending evolution suggestions for an imp
+  imp evolve <name>       review pending evolution suggestions through the fleet
+  imp <tool> evolve       open that individual imp's evolution walkthrough
   imp --which <prompt>    print the routing decision without running
   imp -l | --list         list all routes
 

@@ -99,6 +99,12 @@ test("CLI surfaces pending evolution status, review details, router delegation, 
   expect(jsonReview.stderr).toBe("");
   expect(JSON.parse(jsonReview.stdout).pending.length).toBe(3);
 
+  const pathReview = await runBun(["imps.ts", "evolve", "./imps/imp-minimal"], root);
+
+  expect(pathReview.code).toBe(0);
+  expect(pathReview.stderr).toBe("");
+  expect(pathReview.stdout).toContain("imp-minimal: 3 pending evolutions");
+
   const debug = await runBun(["imps.ts", "evolve", "imp-minimal", "--debug"], root);
 
   expect(debug.code).toBe(0);
@@ -112,6 +118,12 @@ test("CLI surfaces pending evolution status, review details, router delegation, 
   expect(routerReview.code).toBe(0);
   expect(routerReview.stderr).toBe("");
   expect(routerReview.stdout).toContain("imp-minimal: 3 pending evolutions");
+
+  const routerPathReview = await runBun(["imp.ts", "evolve", "./imps/imp-minimal"], root);
+
+  expect(routerPathReview.code).toBe(0);
+  expect(routerPathReview.stderr).toBe("");
+  expect(routerPathReview.stdout).toContain("imp-minimal: 3 pending evolutions");
 
   const dismiss = await runBun(["imps.ts", "evolve", "imp-minimal", "--dismiss", "all"], root);
 

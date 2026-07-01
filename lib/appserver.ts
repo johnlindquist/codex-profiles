@@ -18,7 +18,7 @@ import { spawn, type ChildProcess } from "child_process";
 import { rmSync } from "fs";
 import type { ImpConfig } from "./isolated.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
-import { createEvolutionObserver, parseEvolutionPromptSignal, type EvolutionPromptSignal } from "./evolution.ts";
+import { createEvolutionObserver } from "./evolution.ts";
 import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT, impRpcTimeoutMs, impTurnTimeoutMs } from "./defaults.ts";
 
 export interface TurnHandlers {
@@ -149,11 +149,6 @@ export class AppServerClient {
         memories: { use_memories: false },
         mcp_servers: {},
         web_search: "disabled",
-        // Non-interactive isolated imps own a throwaway CODEX_HOME, so user
-        // hooks can't be approved via a TUI — bypass trust to let them run.
-        // Passed here (not just config.toml) because thread/start config does
-        // not inherit the on-disk bypass flag.
-        bypass_hook_trust: this.hooksEnabled,
         features: {
           plugins: false, hooks: this.hooksEnabled, memories: false, apps: false,
           image_generation: this.config.enableImageGeneration === true,
@@ -171,14 +166,11 @@ export class AppServerClient {
    * Streams notifications via handlers.onNotification. Resolves with the final
    * agent message text on turn/completed.
    */
-  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string; turnTimeoutMs?: number; promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback"> }): Promise<string> {
+  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string; turnTimeoutMs?: number }): Promise<string> {
     if (!this.ready) throw new Error("app-server not ready");
-    const parsed = opts?.promptSignal ? { modelPrompt: prompt, ...opts.promptSignal } : parseEvolutionPromptSignal(prompt);
-    const modelPrompt = parsed.modelPrompt;
-    const evolutionSignal = parsed.userSignal ? parsed : undefined;
-    if (!modelPrompt.trim()) throw new Error("missing prompt after leading + evolution feedback line");
+    if (!prompt.trim()) throw new Error("missing prompt");
     const threadId = await this.startThread();
-    const observer = createEvolutionObserver(this.config, modelPrompt, evolutionSignal);
+    const observer = createEvolutionObserver(this.config, prompt);
 
     return new Promise<string>((resolve, reject) => {
       let finalText = "";
@@ -218,7 +210,7 @@ export class AppServerClient {
       this.handlers.add(h);
       this.send("turn/start", {
         threadId,
-        input: [{ type: "text", text: modelPrompt, text_elements: [] }],
+        input: [{ type: "text", text: prompt, text_elements: [] }],
         cwd: opts?.cwd || process.cwd(),
         effort: opts?.effort || this.config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT,
       });

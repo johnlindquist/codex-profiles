@@ -25,6 +25,50 @@ test("--run forces non-interactive streaming and keeps prompt", () => {
   expect(r.prompt).toBe("list my open PRs");
 });
 
+test("evolve command opens individual imp evolution mode", () => {
+  const r = parseArgs(argv("evolve"));
+  expect(r.evolve).toBe(true);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("");
+});
+
+test("--evolve opens individual imp evolution mode", () => {
+  const r = parseArgs(argv("--evolve"));
+  expect(r.evolve).toBe(true);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("");
+});
+
+test("evolve command keeps immediate brief text", () => {
+  const r = parseArgs(argv("evolve", "fix", "rate", "limit", "recovery"));
+  expect(r.evolve).toBe(true);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("fix rate limit recovery");
+});
+
+test("--evolve keeps immediate brief text", () => {
+  const r = parseArgs(argv("--evolve", "fix rate limit recovery"));
+  expect(r.evolve).toBe(true);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("fix rate limit recovery");
+});
+
+test("--run evolve remains a normal non-interactive prompt", () => {
+  const r = parseArgs(argv("--run", "evolve"));
+  expect(r.run).toBe(true);
+  expect(r.evolve).toBe(false);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("evolve");
+});
+
+test("--run caret text remains a normal non-interactive prompt for wrapper guard", () => {
+  const r = parseArgs(argv("--run", "^ fix rate limit recovery"));
+  expect(r.run).toBe(true);
+  expect(r.evolve).toBe(false);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("^ fix rate limit recovery");
+});
+
 test("-q sets quiet and keeps prompt", () => {
   const r = parseArgs(argv("-q", "say hi"));
   expect(r.quiet).toBe(true);

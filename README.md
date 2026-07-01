@@ -18,6 +18,13 @@ An imp is a single executable TypeScript file that wraps a CLI tool with an isol
 - Opens the interactive Codex TUI by default; `--run` streams non-interactive output when you want automation
 - Clean Ctrl+C — kills the agent, its commands, and cleans up temp files immediately
 
+An imp's meaningful behavior lives in that executable source file: base and
+developer instructions, embedded context loaders, command maps, examples,
+workflow rules, error recovery, and response style. Shared runtime code may
+provide mechanics such as Codex isolation, launch flags, warm-server reuse,
+hooks, and backend key transport, but it must not hide imp-specific behavior or
+policy.
+
 ## Install
 
 ```bash
@@ -133,6 +140,8 @@ imps stop imp-gh             # stop one warm imp (or: imps stop --all)
 imps evolve                  # which imps have pending evolution suggestions
 imps evolve imp-gh           # review one imp's pending suggestions
 imp evolve imp-gh            # same review command from the user-facing router
+imp-gh evolve                # open that imp's interactive evolution walkthrough
+imp gh evolve                # same walkthrough via the router
 imps evolve imp-gh --applied all
 imps evolve imp-gh --dismiss <id>
 imps doctor                  # env sanity checks + stale socket cleanup
@@ -180,17 +189,46 @@ Instead, each non-interactive invocation records a compact, redacted session log
 imps evolve                  # list imps with pending suggestions
 imps evolve imp-gh           # inspect pending suggestions for one imp
 imp evolve imp-gh            # same review command from the user-facing router
+imp-gh evolve                # open a maintainer walkthrough for that imp
+imp gh evolve                # same walkthrough via the router
 imps evolve imp-gh --applied all
 imps evolve imp-gh --dismiss <id>
 ```
 
-To intentionally mark one non-interactive run for evolution review, prefix the
-prompt with `+reason` on the first line. The feedback line is saved as review
-evidence and stripped before the model sees the task:
+To intentionally mark a turn for evolution review, prefix the prompt with
+`+reason` on the first line. A bundled `UserPromptSubmit` hook saves that
+feedback as review evidence and tells Codex to treat the first line as
+maintainer feedback rather than task text:
 
 ```bash
 imp-rg --run $'+missed the obvious parser helper\nwhere is parseArgs defined?'
 ```
+
+During an interactive imp conversation, start a prompt with `^` to switch that
+turn into inline imp evolution mode. Text after `^` becomes the maintainer
+instruction:
+
+```text
+^ make this imp recover when gh returns rate limits
+^
+Handle these failures by checking status first.
+```
+
+The hook loads Imp Evolution instructions into that same turn. Those
+instructions tell the imp to evolve only itself, with its own
+prompt/instructions as the default and primary target: base instructions,
+developer instructions, embedded context rules, command maps, workflow rules,
+examples, error recovery, and response behavior. The imp must not update the
+user's project files, task output, slides, app code, or unrelated repository
+files. Runtime, hook, CLI, test, or documentation edits are exceptional and
+should stay inside the imp-owned surface unless the issue is genuinely shared
+across imps. Use `+reason` when you only want to save an evolution note for
+later review. The `imp-gh evolve` walkthrough still opens a dedicated maintainer
+TUI with pending suggestions, session-log paths, and the target imp source path.
+
+Inline `^` evolution includes a `Target imp source path:` line captured from the
+imp executable path at startup, so the model has a concrete file to inspect
+instead of guessing which imp owns the conversation.
 
 When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
 
@@ -285,7 +323,7 @@ Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`. Com
 | Image generation | ~1,000 | `features.image_generation = false` |
 | Web search | ~1,000 | `web_search = "disabled"` |
 | Tool discovery | ~500 | `features.tool_search = false` |
-| Model system prompt | ~5,000 | `base_instructions` override |
+| Model/base instructions | ~5,000 | CLI/TOML: `instructions` or `model_instructions_file`; SDK typed config: `base_instructions` |
 | Skills, plugins, hooks, memories | varies | Feature flags |
 
 See [docs/ISOLATION.md](docs/ISOLATION.md) for the full research with source line references.

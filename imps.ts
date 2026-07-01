@@ -10,7 +10,7 @@
  *   imps doctor                   environment sanity checks
  */
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import { spawn, spawnSync } from "child_process";
 import { initProjectImps, InitProjectImpsConflictError } from "./lib/init.ts";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
@@ -186,9 +186,14 @@ function readStatusJson(name: string): unknown {
   }
 }
 
+function normalizeImpTarget(name: string): string {
+  return name.includes("/") ? basename(name) : name;
+}
+
 function cmdEvolve(name?: string, args: string[] = []): void {
   const json = args.includes("--json");
   const debug = args.includes("--debug");
+  if (name) name = normalizeImpTarget(name);
 
   if (!name) {
     const rows = [];

@@ -12,12 +12,13 @@ import {
   evolutionTriggerPath,
   refreshEvolutionTrigger,
   makeEvolutionSuggestion,
-  parseEvolutionPromptSignal,
+  parseEvolutionPromptAction,
   pendingEvolutionCount,
   readEvolutionSuggestions,
   readEvolutionTrigger,
   readStabilizations,
   redactSecrets,
+  recordUserEvolutionSignal,
   statusFilePath,
   updateEvolutionSuggestionState,
   writeSessionLog,
@@ -49,30 +50,6 @@ test("clean completed sessions do not create suggestions", () => {
   ).toBeNull();
 });
 
-test("leading plus feedback line is stripped from the model prompt", () => {
-  const parsed = parseEvolutionPromptSignal(`+This should know about github.com/johnlindquist/fusion
-
-Please add 4 more bullet points`);
-  expect(parsed.userSignal).toBe("disappointed");
-  expect(parsed.userFeedback).toBe("This should know about github.com/johnlindquist/fusion");
-  expect(parsed.originalPrompt).toContain("github.com/johnlindquist/fusion");
-  expect(parsed.modelPrompt).toBe("Please add 4 more bullet points");
-});
-
-test("leading plus feedback line works without a blank separator", () => {
-  const parsed = parseEvolutionPromptSignal("+Use gh instead of broad search\nList my open PRs");
-  expect(parsed.userSignal).toBe("disappointed");
-  expect(parsed.userFeedback).toBe("Use gh instead of broad search");
-  expect(parsed.modelPrompt).toBe("List my open PRs");
-});
-
-test("plus signs away from the first character do not trigger feedback parsing", () => {
-  const parsed = parseEvolutionPromptSignal("Explain C++ references\n+not feedback");
-  expect(parsed.userSignal).toBeUndefined();
-  expect(parsed.userFeedback).toBeUndefined();
-  expect(parsed.modelPrompt).toBe("Explain C++ references\n+not feedback");
-});
-
 test("empty final answer creates a pending suggestion", () => {
   const suggestion = makeEvolutionSuggestion({
     imp: "imp-test",
@@ -91,7 +68,170 @@ test("empty final answer creates a pending suggestion", () => {
   expect(existsSync(statusFilePath("imp-test"))).toBe(true);
 });
 
-test("leading plus feedback creates a pending suggestion even when completed", () => {
+test("evolution prompt action parses leading plus feedback", () => {
+  const parsed = parseEvolutionPromptAction(`+This should know about github.com/johnlindquist/fusion
+
+Please add 4 more bullet points`);
+  expect(parsed.kind).toBe("context");
+  if (parsed.kind !== "context") throw new Error("expected context action");
+  expect(parsed.userSignal).toBe("disappointed");
+  expect(parsed.userFeedback).toBe("This should know about github.com/johnlindquist/fusion");
+  expect(parsed.originalPrompt).toContain("github.com/johnlindquist/fusion");
+  expect(parsed.modelPrompt).toBe("Please add 4 more bullet points");
+  expect(parsed.context).toContain("leading + feedback line");
+});
+
+test("evolution prompt action ignores plus signs away from the first character", () => {
+  expect(parseEvolutionPromptAction("Explain C++ references\n+not feedback")).toEqual({ kind: "none" });
+});
+
+test("bare caret parses as immediate evolve request", () => {
+  const parsed = parseEvolutionPromptAction(" ^ ", { impSourcePath: "/repo/imps/imp-minimal" });
+  expect(parsed.kind).toBe("evolve");
+  if (parsed.kind !== "evolve") throw new Error("expected evolve action");
+  expect(parsed.modelPrompt).toBe("");
+  expect(parsed.brief).toBe("");
+  expect(parsed.context).toContain("Imp Evolution instructions");
+  expect(parsed.context).toContain("Target imp source path: /repo/imps/imp-minimal");
+  expect(parsed.context).toContain("inline imp evolution turn, not a normal task");
+  expect(parsed.context).toContain("Hard boundary:");
+  expect(parsed.context).toContain("Evolve only this specific imp");
+  expect(parsed.context).toContain("Do not modify the user's project files");
+  expect(parsed.context).toContain("task files");
+  expect(parsed.context).toContain("generated output");
+  expect(parsed.context).toContain("slides");
+  expect(parsed.context).toContain("app code");
+  expect(parsed.context).toContain("repository content unrelated to this imp");
+  expect(parsed.context).toContain("Primary target:");
+  expect(parsed.context).toContain("Default to editing this imp's own prompt/instructions only");
+  expect(parsed.context).toContain("base instructions");
+  expect(parsed.context).toContain("developer instructions");
+  expect(parsed.context).toContain("command maps");
+  expect(parsed.context).toContain("error-recovery guidance");
+  expect(parsed.context).toContain("response behavior");
+  expect(parsed.context).toContain("Narrow exception:");
+  expect(parsed.context).toContain("Touch non-prompt imp-owned files only when");
+  expect(parsed.context).toContain("cannot be satisfied by prompt/instruction changes alone");
+  expect(parsed.context).toContain("Touch shared imp runtime only when");
+  expect(parsed.context).toContain("genuinely shared across imps");
+  expect(parsed.context).toContain("Do not redesign evolution machinery");
+  expect(parsed.context).toContain("Required workflow:");
+  expect(parsed.context).toContain("Inspect the target imp source path before editing");
+  expect(parsed.context).toContain("Preserve unrelated dirty work");
+  expect(parsed.context).toContain("list the exact files changed");
+  expect(parsed.context).toContain("prompt-only or explain why it was not");
+});
+
+test("bare caret without source path tells the imp to identify its executable first", () => {
+  const parsed = parseEvolutionPromptAction(" ^ ");
+  expect(parsed.kind).toBe("evolve");
+  if (parsed.kind !== "evolve") throw new Error("expected evolve action");
+  expect(parsed.context).toContain("Target imp source path: unknown");
+  expect(parsed.context).toContain("identify this imp's executable/source before editing");
+});
+
+test("caret with text parses as immediate evolve request", () => {
+  const parsed = parseEvolutionPromptAction("^ fix gh rate-limit recovery");
+  expect(parsed.kind).toBe("evolve");
+  if (parsed.kind !== "evolve") throw new Error("expected evolve action");
+  expect(parsed.brief).toBe("fix gh rate-limit recovery");
+  expect(parsed.modelPrompt).toBe("fix gh rate-limit recovery");
+  expect(parsed.context).toContain("fix gh rate-limit recovery");
+});
+
+test("plus feedback does not inject inline imp evolution instructions", () => {
+  const parsed = parseEvolutionPromptAction("+missed rate limit handling\nlist prs");
+  expect(parsed.kind).toBe("context");
+  if (parsed.kind !== "context") throw new Error("expected context action");
+  expect(parsed.context).toContain("leading + feedback line");
+  expect(parsed.context).not.toContain("Imp Evolution instructions");
+  expect(parsed.context).not.toContain("Evolve only this specific imp");
+});
+
+test("caret newline parses multiline immediate evolve brief", () => {
+  const parsed = parseEvolutionPromptAction("^\nline one\nline two");
+  expect(parsed.kind).toBe("evolve");
+  if (parsed.kind !== "evolve") throw new Error("expected evolve action");
+  expect(parsed.brief).toBe("line one\nline two");
+});
+
+test("caret inside normal text is not evolution control", () => {
+  expect(parseEvolutionPromptAction("explain why ^ means xor")).toEqual({ kind: "none" });
+});
+
+test("caret without following whitespace is not evolution control", () => {
+  expect(parseEvolutionPromptAction("^foo")).toEqual({ kind: "none" });
+});
+
+test("hook-owned user feedback creates one pending evolution suggestion", () => {
+  expect(recordUserEvolutionSignal({
+    imp: "imp-hook",
+    originalPrompt: "+Use gh instead of broad search\nList my open PRs",
+    modelPrompt: "List my open PRs",
+    userFeedback: "Use gh instead of broad search",
+    sessionId: "thread-hook",
+    now: new Date("2026-06-18T12:00:00Z"),
+  })).toBe(true);
+  expect(recordUserEvolutionSignal({
+    imp: "imp-hook",
+    originalPrompt: "+Use gh instead of broad search\nList my open PRs",
+    modelPrompt: "List my open PRs",
+    userFeedback: "Use gh instead of broad search",
+    sessionId: "thread-hook",
+    now: new Date("2026-06-18T12:01:00Z"),
+  })).toBe(false);
+  const suggestions = readEvolutionSuggestions("imp-hook");
+  expect(suggestions).toHaveLength(1);
+  expect(suggestions[0].state).toBe("pending");
+  expect(suggestions[0].severity).toBe("medium");
+  expect(suggestions[0].transport).toBeUndefined();
+  expect(suggestions[0].evidence.join("\n")).toContain("user marked this turn for evolution");
+  expect(suggestions[0].evidence.join("\n")).not.toContain("session produced no final assistant text");
+  const sessionBody = readFileSync(suggestions[0].event_log_path!, "utf8");
+  expect(sessionBody).toContain('"transport":"hook:user-prompt-submit"');
+  expect(sessionBody).not.toContain("session produced no final assistant text");
+});
+
+test("hook-owned user feedback redacts persisted secrets", () => {
+  expect(recordUserEvolutionSignal({
+    imp: "imp-hook-redact",
+    originalPrompt: "+token=ghp_abcdefghijklmnopqrstuvwxyz123456\nDo work",
+    modelPrompt: "Do work",
+    userFeedback: "token=ghp_abcdefghijklmnopqrstuvwxyz123456",
+    now: new Date("2026-06-18T12:00:00Z"),
+  })).toBe(true);
+  const suggestion = readEvolutionSuggestions("imp-hook-redact")[0];
+  expect(JSON.stringify(suggestion)).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
+  const body = readFileSync(suggestion.event_log_path!, "utf8");
+  expect(body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
+});
+
+test("hook-owned caret request preserves an explicit empty model prompt", () => {
+  expect(recordUserEvolutionSignal({
+    imp: "imp-caret",
+    originalPrompt: "^",
+    modelPrompt: "",
+    userFeedback: "User requested immediate imp evolution for the current conversation.",
+    userSignal: "review_requested",
+    sessionId: "thread-caret",
+    turnId: "turn-caret",
+    transcriptPath: "/tmp/transcript.jsonl",
+    dedupeScope: "thread-caret",
+    now: new Date("2026-06-18T12:00:00Z"),
+  })).toBe(true);
+  const suggestion = readEvolutionSuggestions("imp-caret")[0];
+  expect(suggestion.state).toBe("pending");
+  expect(suggestion.thread_id).toBe("thread-caret");
+  expect(suggestion.turn_id).toBe("turn-caret");
+  expect(suggestion.transcript_path).toBe("/tmp/transcript.jsonl");
+  expect(suggestion.evidence.join("\n")).toContain("requested imp evolution review");
+  const body = readFileSync(suggestion.event_log_path!, "utf8");
+  expect(body).toContain('"prompt":""');
+  expect(body).toContain('"originalPrompt":"^"');
+  expect(body).toContain('"userSignal":"review_requested"');
+});
+
+test("explicit user signal still creates a pending suggestion when supplied by telemetry", () => {
   const suggestion = makeEvolutionSuggestion({
     imp: "imp-test",
     prompt: "Please add 4 more bullet points",
