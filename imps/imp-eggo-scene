@@ -1,6 +1,0 @@
-#!/usr/bin/env bun
-import { runEggoSceneImp } from "./imp-eggo-scene.assets/runtime.ts";
-
-runEggoSceneImp({
-  name: "imp-eggo-scene",
-});

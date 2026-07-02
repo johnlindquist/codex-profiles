@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { parseArgs, runImp } from "../lib/isolated.ts";
+import { parseArgs, runImp, type ImpConfig } from "../lib/isolated.ts";
 import { constants, createReadStream, createWriteStream } from "fs";
 import { access, chmod, readdir, readFile, realpath, rename, stat, writeFile } from "fs/promises";
 import { dirname, join, relative, resolve } from "path";
@@ -504,26 +504,34 @@ For warm non-interactive runs, current codex-imps context is attached to each us
 }`;
 }
 
-const cliRoot = takeRootOverrideArg();
-const mode = parseArgs(process.argv);
-const impsRoot = await resolveImpsRoot(cliRoot, mode);
-let contextBlock = "";
-const shouldLoadContext = !mode.help && !mode.serve;
-
-if (shouldLoadContext) {
-  contextBlock = await loadImpsContext(impsRoot);
-}
-
-const includeContextInDeveloper = shouldLoadContext && (mode.interactive || mode.noWarm);
-if (shouldLoadContext && mode.prompt && !includeContextInDeveloper) {
-  replacePromptArgs(buildPromptWithContext(contextBlock, mode.prompt));
-}
-
-await runImp({
+export const config: ImpConfig = {
   name: "imp-faq",
+  route: { pattern: String.raw`\b(imp faq|which imp|about (the )?imps?)\b`, hint: "codex-imps FAQ" },
   model: "gpt-5.3-codex-spark",
   reasoningEffort: "low",
   baseInstructions:
     "You are imp-faq, the codex-imps companion agent. Use the codex-imps repository context loaded from disk.",
-  developerInstructions: buildDeveloperInstructions(impsRoot, includeContextInDeveloper ? contextBlock : ""),
-});
+  developerInstructions: buildDeveloperInstructions(DEFAULT_IMPS_ROOT, ""),
+};
+
+if (import.meta.main) {
+  const cliRoot = takeRootOverrideArg();
+  const mode = parseArgs(process.argv);
+  const impsRoot = await resolveImpsRoot(cliRoot, mode);
+  let contextBlock = "";
+  const shouldLoadContext = !mode.help && !mode.serve;
+
+  if (shouldLoadContext) {
+    contextBlock = await loadImpsContext(impsRoot);
+  }
+
+  const includeContextInDeveloper = shouldLoadContext && (mode.interactive || mode.noWarm);
+  if (shouldLoadContext && mode.prompt && !includeContextInDeveloper) {
+    replacePromptArgs(buildPromptWithContext(contextBlock, mode.prompt));
+  }
+
+  await runImp({
+    ...config,
+    developerInstructions: buildDeveloperInstructions(impsRoot, includeContextInDeveloper ? contextBlock : ""),
+  });
+}

@@ -14,10 +14,47 @@
  * Run this after editing an imp's prompt — hot-reload means the very next eval
  * exercises the new prompt.
  */
-import { mkdtempSync, readdirSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { dirname, join } from "path";
 import { spawn } from "child_process";
+
+/**
+ * Per-imp eval results, merged after every run. This is the trust ledger:
+ * `imps list` reads it to show each imp's eval coverage and last clean run,
+ * and `imps evolve --accept` reads it to gate behavior changes on proof.
+ */
+export const EVAL_RESULTS_FILE = join(homedir(), ".local", "share", "codex-imps", "eval-results.json");
+
+export interface EvalSuiteResult {
+  cases: number;
+  passed: number;
+  failed: number;
+  /** True when the run covered every case in the suite (no --filter). */
+  full: boolean;
+  lastRunAt: string;
+  /** Last time a FULL run of this suite passed every case. */
+  lastCleanAt?: string;
+}
+
+export function readEvalResults(): Record<string, EvalSuiteResult> {
+  try {
+    return JSON.parse(readFileSync(EVAL_RESULTS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function recordEvalResult(suite: string, result: Omit<EvalSuiteResult, "lastCleanAt">): void {
+  const all = readEvalResults();
+  const prev = all[suite];
+  const lastCleanAt = result.full && result.failed === 0 ? result.lastRunAt : prev?.lastCleanAt;
+  all[suite] = { ...result, ...(lastCleanAt ? { lastCleanAt } : {}) };
+  try {
+    mkdirSync(dirname(EVAL_RESULTS_FILE), { recursive: true });
+    writeFileSync(EVAL_RESULTS_FILE, `${JSON.stringify(all, null, 2)}\n`);
+  } catch {}
+}
 
 export interface EvalContext {
   stdout: string;
@@ -86,11 +123,12 @@ async function main(): Promise<void> {
 
   for (const suite of suites) {
     const mod = await import(join(EVALS_DIR, `${suite}.ts`));
-    const cases: EvalCase[] = (mod.default ?? []).filter(
-      (c: EvalCase) => !filter || c.name.includes(filter),
-    );
+    const allCases: EvalCase[] = mod.default ?? [];
+    const cases: EvalCase[] = allCases.filter((c: EvalCase) => !filter || c.name.includes(filter));
     if (cases.length === 0) continue;
     console.log(`\n${suite} (${cases.length} case${cases.length === 1 ? "" : "s"})`);
+    let suitePass = 0;
+    let suiteFail = 0;
 
     for (const c of cases) {
       const dir = mkdtempSync(join(tmpdir(), `imp-eval-${suite}-`));
@@ -102,9 +140,11 @@ async function main(): Promise<void> {
         const secs = ((Date.now() - started) / 1000).toFixed(1);
         if (verdict === null) {
           pass++;
+          suitePass++;
           console.log(`  PASS  ${c.name} (${secs}s)`);
         } else {
           fail++;
+          suiteFail++;
           failures.push(`${suite} / ${c.name}: ${verdict}`);
           console.log(`  FAIL  ${c.name} (${secs}s) — ${verdict}`);
           const answer = ctx.stdout.trim().slice(0, 300);
@@ -116,6 +156,7 @@ async function main(): Promise<void> {
         }
       } catch (e: any) {
         fail++;
+        suiteFail++;
         failures.push(`${suite} / ${c.name}: harness error ${e.message}`);
         console.log(`  FAIL  ${c.name} — harness error: ${e.message}`);
       } finally {
@@ -124,6 +165,14 @@ async function main(): Promise<void> {
         }
       }
     }
+
+    recordEvalResult(suite, {
+      cases: cases.length,
+      passed: suitePass,
+      failed: suiteFail,
+      full: !filter && cases.length === allCases.length,
+      lastRunAt: new Date().toISOString(),
+    });
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
@@ -134,4 +183,5 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+// Guarded so `imps.ts` can import readEvalResults without triggering a paid run.
+if (import.meta.main) await main();

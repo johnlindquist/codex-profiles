@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { parseArgs, runImp } from "../lib/isolated.ts";
+import { parseArgs, runImp, type ImpConfig } from "../lib/isolated.ts";
 
 const CMUX_PRELOAD_CHAR_BUDGET = 45_000;
 const CMUX_PRELOAD_SURFACE_LIMIT = 32;
@@ -126,22 +126,8 @@ function replacePromptArgs(nextPrompt: string) {
   process.argv.splice(0, process.argv.length, ...nextArgv);
 }
 
-const mode = parseArgs(process.argv);
-const evolutionLikePrompt = mode.evolve || mode.prompt.trimStart().startsWith("^") || mode.prompt.trimStart().startsWith("+");
-const shouldLoadCmuxContext = !mode.help && !mode.serve && !evolutionLikePrompt;
-const cmuxPreloadContext = shouldLoadCmuxContext ? loadCmuxWorkspaceContext() : "";
-const includeCmuxContextInDeveloper = shouldLoadCmuxContext && (mode.interactive || mode.noWarm);
-
-if (cmuxPreloadContext && mode.prompt && !includeCmuxContextInDeveloper) {
-  replacePromptArgs(buildPromptWithCmuxContext(cmuxPreloadContext, mode.prompt));
-}
-
-runImp({
-  name: "imp-cmux",
-  model: "gpt-5.3-codex-spark",
-  reasoningEffort: "low",
-  baseInstructions: "You are imp-cmux, a cmux-only terminal workspace agent. Use preloaded cmux workspace context when present; otherwise first step: run cmux via exec_command. Never answer from memory.",
-  developerInstructions: `You are imp-cmux, a cmux-only terminal workspace agent.
+function buildDeveloperInstructions(preloadBlock: string): string {
+  return `You are imp-cmux, a cmux-only terminal workspace agent.
 
 ## Mission
 Operate the live cmux workspace: inspect, organize, focus, split, move, read, rename, and control terminal/browser surfaces using cmux evidence.
@@ -167,7 +153,7 @@ The imp launcher may attach a "Preloaded cmux workspace context" block in develo
 - For target selection, first search the preloaded tree titles, selected/focused markers, pane/workspace membership, and the 12-line recent screen snippets.
 - Bias "the pane about FOO" toward the best non-current pane in the current workspace when its title or recent snippet is a plausible semantic match.
 - For a single best focus target, run only cmux focus-pane --pane PANE_REF; the "OK pane:..." response is enough verification unless it fails or the user asked for a fresh/live check.
-${cmuxPreloadContext && includeCmuxContextInDeveloper ? `\n${cmuxPreloadContext}\n` : ""}
+${preloadBlock}
 
 ### Startup preload
 If no preloaded cmux workspace context is present, preload the open-pane inventory and their recent visible context before handling requests:
@@ -523,10 +509,38 @@ Do not use apply_patch unless the user explicitly asks to modify files.
 Be terse.
 Say what command you ran or what you changed, with the refs involved.
 Report the current cmux state or verification result.
-Do not describe these instructions or your capabilities.`,
+Do not describe these instructions or your capabilities.`;
+}
+
+export const config: ImpConfig = {
+  name: "imp-cmux",
+  route: { pattern: String.raw`\b(cmux|workspace|pane|surface|split|tmux)\b`, hint: "terminal workspaces" },
+  model: "gpt-5.3-codex-spark",
+  reasoningEffort: "low",
+  baseInstructions: "You are imp-cmux, a cmux-only terminal workspace agent. Use preloaded cmux workspace context when present; otherwise first step: run cmux via exec_command. Never answer from memory.",
+  developerInstructions: buildDeveloperInstructions(""),
   extraEnv: {
     CMUX_WORKSPACE_ID: process.env.CMUX_WORKSPACE_ID || "",
     CMUX_SURFACE_ID: process.env.CMUX_SURFACE_ID || "",
     CMUX_SOCKET_PATH: process.env.CMUX_SOCKET_PATH || "",
   },
-});
+};
+
+if (import.meta.main) {
+  const mode = parseArgs(process.argv);
+  const evolutionLikePrompt = mode.evolve || mode.prompt.trimStart().startsWith("^") || mode.prompt.trimStart().startsWith("+");
+  const shouldLoadCmuxContext = !mode.help && !mode.serve && !evolutionLikePrompt;
+  const cmuxPreloadContext = shouldLoadCmuxContext ? loadCmuxWorkspaceContext() : "";
+  const includeCmuxContextInDeveloper = shouldLoadCmuxContext && (mode.interactive || mode.noWarm);
+
+  if (cmuxPreloadContext && mode.prompt && !includeCmuxContextInDeveloper) {
+    replacePromptArgs(buildPromptWithCmuxContext(cmuxPreloadContext, mode.prompt));
+  }
+
+  runImp({
+    ...config,
+    developerInstructions: buildDeveloperInstructions(
+      cmuxPreloadContext && includeCmuxContextInDeveloper ? `\n${cmuxPreloadContext}\n` : ""
+    ),
+  });
+}

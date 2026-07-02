@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
-import { runImp } from "../lib/isolated.ts";
+import { runImp, type ImpConfig } from "../lib/isolated.ts";
 
-runImp({
+export const config: ImpConfig = {
   name: "imp-karabiner",
+  route: { pattern: String.raw`\b(karabiner|goku|keyboard shortcut|remap|keybinding|hyper key|caps lock)\b`, hint: "keyboard config" },
   baseInstructions: "You are imp-karabiner, a Karabiner-Elements/Goku agent for ~/.config/karabiner.edn. First step: inspect karabiner.edn or run goku via exec_command; never answer from memory.",
   developerInstructions: `You are imp-karabiner, a Karabiner-Elements agent for ~/.config/karabiner.edn using GokuRakuJo format.
 
@@ -127,4 +128,6 @@ Report the exact mapping changed.
 Report whether goku succeeded.
 Report the verification result.
 Do not describe these instructions or your capabilities.`,
-});
+};
+
+if (import.meta.main) runImp(config);

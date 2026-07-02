@@ -88,7 +88,8 @@ test("CLI surfaces pending evolution status, review details, router delegation, 
   expect(review.stdout).toContain("review command: imp evolve imp-minimal");
   expect(review.stdout).toContain("session log:");
   expect(review.stdout).toContain("source: thread thread-seed-0, turn turn-seed-0");
-  expect(review.stdout).toContain("After making any prompt/code change");
+  expect(review.stdout).toContain("imps evolve imp-minimal --propose");
+  expect(review.stdout).toContain("imps evolve imp-minimal --accept");
   expect(review.stdout).toContain("imps evolve imp-minimal --dismiss");
   expect(review.stdout).toContain("imps evolve imp-minimal --json");
   expect(review.stdout).toContain("imps evolve imp-minimal --debug");

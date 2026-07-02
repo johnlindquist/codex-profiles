@@ -34,6 +34,19 @@ type WarmImpRequest = {
   turnTimeoutMs?: number;
 };
 
+/**
+ * Per-chunk streaming notifications suppressed in quiet mode: they exist only
+ * for live rendering and can be high-volume. Structural notifications
+ * (item/started, item/completed, turn/completed, thread/tokenUsage/updated) are
+ * always forwarded so the client can build its audit transcript even for `-q`.
+ */
+const QUIET_SUPPRESSED_NOTIFICATIONS = new Set<string>([
+  "item/agentMessage/delta",
+  "item/reasoning/textDelta",
+  "item/reasoning/summaryTextDelta",
+  "item/commandExecution/outputDelta",
+]);
+
 export function socketPath(name: string): string {
   return `/tmp/codex-imp-${name}.sock`;
 }
@@ -201,7 +214,11 @@ export async function serveImp(config: ImpConfig): Promise<void> {
             prompt,
             {
               onNotification: (method, params) => {
-                if (!req.quiet) send({ type: "notif", method, params });
+                // Forward structural notifications even in quiet mode so the
+                // client can record the audit transcript; drop only the noisy
+                // per-chunk deltas that quiet mode would never render.
+                if (req.quiet && QUIET_SUPPRESSED_NOTIFICATIONS.has(method)) return;
+                send({ type: "notif", method, params });
               },
             },
             { cwd: req.cwd, effort: req.effort, turnTimeoutMs: req.turnTimeoutMs },

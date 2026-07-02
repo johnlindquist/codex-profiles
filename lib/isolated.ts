@@ -19,9 +19,23 @@ import {
   recordUserEvolutionSignal,
 } from "./evolution.ts";
 import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT, parsePositiveMs } from "./defaults.ts";
+import { createTranscriptRecorder, emitStatsLine } from "./transcript.ts";
 
 export interface ImpConfig {
   name: string;
+  /**
+   * Routing metadata for the `imp` router. The imp file exports its config
+   * (`export const config`) and guards execution with `import.meta.main`, so
+   * the router can import the module and derive the route table — no
+   * hand-maintained route list. `pattern` is a word-boundary keyword
+   * alternation (RegExp source, matched case-insensitively); `priority`
+   * breaks exact score ties (higher wins, default 0).
+   */
+  route?: {
+    pattern: string;
+    hint: string;
+    priority?: number;
+  };
   model?: string;
   reasoningEffort?: string;
   /**
@@ -588,32 +602,50 @@ ${evolutionAction.modelPrompt || evolutionAction.brief}`;
       ]
     : effectivePrompt;
 
+  // One recorder spans the whole invocation (warm attempt + any cold fallback):
+  // it collects the audit transcript from the event stream and clocks wall time
+  // for the stats line. finish() is idempotent, so warm-success and cold both
+  // call it safely.
+  const runModel = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
+  const transcript = createTranscriptRecorder(config.name, {
+    cwd: process.cwd(),
+    prompt: effectivePrompt,
+    model: runModel,
+  });
+
   // Non-interactive runs use a warm app-server by default: auto-start (and reuse)
   // a background imp so every call skips process spawn + auth/config load +
   // WebSocket prewarm. Opt out with --no-warm. If the imp can't be brought up,
   // fall through to a cold in-process run.
   const useWarmImp = !noWarm && !config.inputImages?.length;
   if (useWarmImp && (await ensureWarmImp(config))) {
-    const onSignal = () => { ac.abort(); cleanupStdin(); process.exit(130); };
+    const onSignal = () => { ac.abort(); transcript.finish({ status: "interrupted", transport: "warm" }); cleanupStdin(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
     let streamedAnswer = false;
     let routed = true;
+    let warmErrored = false;
+    let warmFinalText: string | undefined;
     try {
       await runViaWarmImp(
         config.name,
         { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort, turnTimeoutMs },
         {
           onNotification: (method, params) => {
+            transcript.onAppServerNotification(method, params);
+            // Quiet mode still receives structural notifications (for the audit
+            // transcript) but renders nothing.
+            if (quiet) return;
             if (method === "item/agentMessage/delta") streamedAnswer = true;
             renderAppServerNotif(method, params);
           },
           onFinal: (text) => {
+            warmFinalText = text;
             // In streaming mode the answer already printed via deltas; just close the line.
-            if (streamedAnswer) process.stdout.write("\n");
+            if (!quiet && streamedAnswer) process.stdout.write("\n");
             else if (text) console.log(text);
           },
-          onError: (message) => { process.stderr.write(`\x1b[31mimp error: ${message}\x1b[0m\n`); },
+          onError: (message) => { warmErrored = true; process.stderr.write(`\x1b[31mimp error: ${message}\x1b[0m\n`); },
         },
         ac.signal,
       );
@@ -625,13 +657,16 @@ ${evolutionAction.modelPrompt || evolutionAction.brief}`;
       process.off("SIGTERM", onSignal);
     }
     if (routed) {
+      const entry = transcript.finish({ status: warmErrored ? "failed" : "completed", transport: "warm", finalText: warmFinalText });
+      if (!warmErrored) emitStatsLine(entry);
       cleanupStdin();
       return;
     }
   }
 
   const { startThread, cleanup } = createIsolatedCodex(config);
-  const onSignal = () => { ac.abort(); cleanupStdin(); cleanup(); process.exit(130); };
+  const coldTransport = quiet ? "sdk-quiet" : "sdk-stream";
+  const onSignal = () => { ac.abort(); transcript.finish({ status: "interrupted", transport: coldTransport }); cleanupStdin(); cleanup(); process.exit(130); };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
 
@@ -643,16 +678,24 @@ ${evolutionAction.modelPrompt || evolutionAction.brief}`;
       const turn = await thread.run(input, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
       observer.finish({ status: "completed", transport: "sdk-quiet", finalText: turn.finalResponse });
+      const quietTokens = turn.usage ? (turn.usage.input_tokens ?? 0) + (turn.usage.output_tokens ?? 0) : undefined;
+      const entry = transcript.finish({ status: "completed", transport: "sdk-quiet", finalText: turn.finalResponse, tokens: quietTokens });
+      emitStatsLine(entry);
     } else {
       const { events } = await thread.runStreamed(input, { signal: ac.signal });
       for await (const event of events) {
         observer.onSdkEvent(event);
+        transcript.onSdkEvent(event);
         renderEvent(event);
       }
       observer.finish({ status: "completed", transport: "sdk-stream" });
+      const entry = transcript.finish({ status: "completed", transport: "sdk-stream" });
+      emitStatsLine(entry);
     }
   } catch (error) {
-    observer.finish({ status: ac.signal.aborted ? "interrupted" : "failed", transport: quiet ? "sdk-quiet" : "sdk-stream" });
+    const status = ac.signal.aborted ? "interrupted" : "failed";
+    observer.finish({ status, transport: coldTransport });
+    transcript.finish({ status, transport: coldTransport });
     throw error;
   } finally {
     process.off("SIGINT", onSignal);

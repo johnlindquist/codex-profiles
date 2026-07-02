@@ -1,6 +1,0 @@
-#!/usr/bin/env bun
-import { eggoReferenceSheetDesign } from "./imp-eggo-quality-reset.assets/contract.ts";
-import { runEggoQualityResetImp } from "./imp-eggo-quality-reset.assets/runtime.ts";
-
-runEggoQualityResetImp(eggoReferenceSheetDesign);
-

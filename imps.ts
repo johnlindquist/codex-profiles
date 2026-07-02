@@ -6,14 +6,20 @@
  *   imps ps                       warm imps only: pid, uptime, idle timeout
  *   imps stop <name>|--all        stop warm imp(s)
  *   imps evolve [name]            pending evolution suggestions
+ *   imps evolve <name> --propose <id|all>   draft a reviewable diff + regression eval
+ *   imps evolve <name> --show <id>          print a saved proposal
+ *   imps evolve <name> --accept <id>        apply (evals must pass), then review + commit
  *   imps init [--dir <root>]      create/update project-local ./imps runtime
  *   imps doctor                   environment sanity checks
  */
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
-import { basename, join } from "path";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "fs";
+import { basename, dirname, join, relative } from "path";
 import { spawn, spawnSync } from "child_process";
 import { initProjectImps, InitProjectImpsConflictError } from "./lib/init.ts";
+import { impScanDirs, listImps } from "./lib/roster.ts";
+import { readEvalResults } from "./evals.ts";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
+import { createIsolatedCodex, type ImpConfig } from "./lib/isolated.ts";
 import {
   evolutionFilePath,
   evolutionTriggerPath,
@@ -23,14 +29,44 @@ import {
   readEvolutionTrigger,
   statusFilePath,
   updateEvolutionSuggestionState,
+  type EvolutionSuggestion,
 } from "./lib/evolution.ts";
+import {
+  acceptProposal,
+  buildProposalPrompt,
+  gitRepoRoot,
+  parseProposalResponse,
+  proposalFilePath,
+  proposalMaintainerInstructions,
+  readProposalRecord,
+  writeProposalFile,
+  type ProposalRecord,
+} from "./lib/evolution-propose.ts";
 
 const IMPS_DIR = join(import.meta.dir, "imps");
+const EVALS_DIR = join(import.meta.dir, "evals");
+
+// Core imps plus overlay dirs (IMPS_PATH, ~/.config/imps/dirs) — personal or
+// project fleets show up in list/ps/stop/evolve exactly like core imps.
+const rosterMap = listImps(impScanDirs(IMPS_DIR));
 
 function roster(): string[] {
-  return readdirSync(IMPS_DIR)
-    .filter((f) => /^imp-[a-z0-9-]+$/.test(f))
-    .sort();
+  return [...rosterMap.keys()].sort();
+}
+
+function evalSuitePath(name: string): string {
+  return join(EVALS_DIR, `${name}.ts`);
+}
+
+/** Trust column: eval coverage and the last clean full run, from the results ledger. */
+function evalStatus(name: string): string {
+  if (!existsSync(evalSuitePath(name))) return "-";
+  const result = readEvalResults()[name];
+  if (!result) return "unproven";
+  const when = (result.lastCleanAt ?? "").slice(0, 10);
+  if (result.failed > 0) return `${result.passed}/${result.cases} FAILING`;
+  if (!result.full || !when) return `${result.cases} cases (partial)`;
+  return `${result.cases} cases ✓ ${when}`;
 }
 
 async function isWarm(name: string): Promise<boolean> {
@@ -49,11 +85,11 @@ function fmtUptime(startedAt?: number): string {
 async function cmdList(): Promise<void> {
   const names = roster();
   const pad = Math.max(...names.map((n) => n.length)) + 2;
-  console.log(`${"IMP".padEnd(pad)}WARM   EVOLUTIONS`);
+  console.log(`${"IMP".padEnd(pad)}WARM   EVOLUTIONS   EVALS`);
   for (const name of names) {
     const warm = (await isWarm(name)) ? "yes" : "-";
     const pending = pendingEvolutionCount(name) || "-";
-    console.log(`${name.padEnd(pad)}${String(warm).padEnd(7)}${pending}`);
+    console.log(`${name.padEnd(pad)}${String(warm).padEnd(7)}${String(pending).padEnd(13)}${evalStatus(name)}`);
   }
 }
 
@@ -190,7 +226,7 @@ function normalizeImpTarget(name: string): string {
   return name.includes("/") ? basename(name) : name;
 }
 
-function cmdEvolve(name?: string, args: string[] = []): void {
+async function cmdEvolve(name?: string, args: string[] = []): Promise<void> {
   const json = args.includes("--json");
   const debug = args.includes("--debug");
   if (name) name = normalizeImpTarget(name);
@@ -228,6 +264,11 @@ function cmdEvolve(name?: string, args: string[] = []): void {
       return;
     }
     console.log(`${name}: marked ${changed} evolution suggestion${changed === 1 ? "" : "s"} ${state}`);
+    return;
+  }
+
+  if (args.includes("--propose") || args.includes("--show") || args.includes("--accept")) {
+    await cmdEvolveProposal(name, args);
     return;
   }
 
@@ -306,10 +347,243 @@ function cmdEvolve(name?: string, args: string[] = []): void {
       console.log(`      source: ${[s.thread_id ? `thread ${s.thread_id}` : "", s.turn_id ? `turn ${s.turn_id}` : ""].filter(Boolean).join(", ")}`);
     }
   }
-  console.log(`\nAfter making any prompt/code change, mark reviewed items: imps evolve ${name} --applied <id|all>`);
-  console.log(`To discard noise: imps evolve ${name} --dismiss <id|all>`);
-  console.log(`For machine-readable output: imps evolve ${name} --json`);
-  console.log(`For queue/status debugging: imps evolve ${name} --debug`);
+  console.log(`\nDraft a reviewable diff + regression eval: imps evolve ${name} --propose <id|all>`);
+  console.log(`Then apply once evals pass:                 imps evolve ${name} --accept <id>`);
+  console.log(`Inspect a saved proposal:                   imps evolve ${name} --show <id>`);
+  console.log(`Manually mark reviewed items:               imps evolve ${name} --applied <id|all>`);
+  console.log(`To discard noise:                           imps evolve ${name} --dismiss <id|all>`);
+  console.log(`For machine-readable output:                imps evolve ${name} --json`);
+  console.log(`For queue/status debugging:                 imps evolve ${name} --debug`);
+}
+
+/** Read a redacted session log for the model prompt, truncated to keep turns cheap. */
+function readSessionLogPreview(path?: string, max = 6000): string | undefined {
+  if (!path || !existsSync(path)) return undefined;
+  try {
+    const text = readFileSync(path, "utf8");
+    return text.length > max ? `${text.slice(0, max)}\n... [truncated]` : text;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One non-interactive, read-only maintainer run that returns the raw proposal text. */
+async function generateProposalResponse(imp: string, prompt: string): Promise<string> {
+  const config: ImpConfig = {
+    name: `${imp}-propose`,
+    sandboxMode: "read-only",
+    baseInstructions:
+      "You are an imp maintainer producing one reviewable evolution proposal. You run read-only, non-interactive, once. Emit only the requested sections.",
+    developerInstructions: proposalMaintainerInstructions(imp),
+  };
+  const { startThread, cleanup } = createIsolatedCodex(config);
+  try {
+    const thread = startThread({ sandboxMode: "read-only" });
+    const turn = await thread.run(prompt);
+    return turn.finalResponse ?? "";
+  } finally {
+    cleanup();
+  }
+}
+
+interface ProposeOneInput {
+  imp: string;
+  sourcePath: string;
+  sourceText: string;
+  repoRoot: string;
+  sourceRelPath: string;
+  evalSuitePath?: string;
+  evalSuiteText?: string;
+  evalSuiteRelPath?: string;
+  suggestion: EvolutionSuggestion;
+}
+
+async function proposeOne(input: ProposeOneInput): Promise<void> {
+  const { imp, suggestion } = input;
+  const prompt = buildProposalPrompt({
+    imp,
+    suggestion,
+    sourcePath: input.sourcePath,
+    sourceText: input.sourceText,
+    repoRoot: input.repoRoot,
+    sourceRelPath: input.sourceRelPath,
+    evalSuitePath: input.evalSuitePath,
+    evalSuiteText: input.evalSuiteText,
+    evalSuiteRelPath: input.evalSuiteRelPath,
+    sessionLogText: readSessionLogPreview(suggestion.event_log_path),
+  });
+  process.stderr.write(`\nDrafting proposal for ${suggestion.id} (one model run, read-only)...\n`);
+  const raw = await generateProposalResponse(imp, prompt);
+  const parsed = parseProposalResponse(raw);
+  const createdAt = new Date().toISOString();
+
+  if (!parsed.ok) {
+    const record: ProposalRecord = {
+      schema: 1,
+      imp,
+      id: suggestion.id,
+      sourcePath: input.sourcePath,
+      repoRoot: input.repoRoot,
+      evalSuitePath: input.evalSuitePath,
+      createdAt,
+      status: "failed",
+      raw,
+    };
+    const file = writeProposalFile(record);
+    console.log(`\n${suggestion.id}: FAILED — ${parsed.reason}. Raw model output saved (not applied):`);
+    console.log(`  ${file}`);
+    return;
+  }
+
+  const record: ProposalRecord = {
+    schema: 1,
+    imp,
+    id: suggestion.id,
+    sourcePath: input.sourcePath,
+    repoRoot: input.repoRoot,
+    evalSuitePath: input.evalSuitePath,
+    createdAt,
+    status: "proposed",
+    rationale: parsed.proposal.rationale,
+    diff: parsed.proposal.diff,
+    evalCase: parsed.proposal.evalCase,
+  };
+  const file = writeProposalFile(record);
+  console.log(`\n${suggestion.id}: proposal saved to ${file}`);
+  console.log(`\nRationale:\n${record.rationale}`);
+  console.log(`\nDiff:\n${record.diff}`);
+  if (record.evalCase) console.log(`Regression eval case:\n${record.evalCase}\n`);
+  console.log(`Review it, then apply (evals must pass): imps evolve ${imp} --accept ${suggestion.id}`);
+}
+
+async function acceptProposalCmd(name: string, id: string): Promise<void> {
+  const record = readProposalRecord(name, id);
+  if (!record) {
+    console.error(`no saved proposal for ${id}; run: imps evolve ${name} --propose ${id}`);
+    process.exit(1);
+  }
+  if (record.status === "failed") {
+    console.error(`proposal ${id} failed to parse and has no applyable diff. Re-run --propose or hand-write a diff.`);
+    process.exit(1);
+  }
+
+  const evalsRunner = (imp: string) =>
+    new Promise<{ code: number }>((resolve) => {
+      const child = spawn("bun", [join(import.meta.dir, "evals.ts"), imp], { cwd: import.meta.dir, stdio: "inherit" });
+      child.on("exit", (code, signal) => resolve({ code: signal ? 1 : code ?? 1 }));
+      child.on("error", () => resolve({ code: 1 }));
+    });
+
+  const outcome = await acceptProposal(record, {
+    evalsRunner,
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
+  if (outcome.ok && outcome.proven) {
+    console.log(`\n${name}: ${outcome.message}`);
+    console.log("Review the change and commit it yourself — nothing was committed:");
+    console.log(`  git -C ${record.repoRoot} diff`);
+    if (record.evalCase) {
+      console.log(`If the diff did not already add it, append the regression eval case from`);
+      console.log(`  ${proposalFilePath(name, id)}`);
+      console.log(`to ${evalSuitePath(name)}.`);
+    }
+    return;
+  }
+  if (outcome.ok && !outcome.proven) {
+    console.log(`\n\x1b[33m⚠ ${name}: ${outcome.message}\x1b[0m`);
+    console.log(`\x1b[33mThis change SHIPS UNPROVEN — no eval suite exists for ${name}.\x1b[0m`);
+    console.log(`Create evals/${name}.ts so future changes can be proven, then review + commit:`);
+    console.log(`  git -C ${record.repoRoot} diff`);
+    return;
+  }
+
+  console.error(`\n${name}: accept failed at ${outcome.stage} — ${outcome.message}`);
+  if (outcome.stage === "evals") {
+    console.error(`Suggestion ${id} left pending; ${outcome.reverted ? "diff reverted." : "diff NOT reverted — inspect the tree."}`);
+  }
+  process.exit(1);
+}
+
+async function cmdEvolveProposal(name: string, args: string[]): Promise<void> {
+  const sourcePath = rosterMap.get(name);
+  if (!sourcePath) {
+    console.error(`imps evolve: unknown imp ${name}`);
+    process.exit(1);
+  }
+
+  const showIdx = args.findIndex((a) => a === "--show");
+  if (showIdx >= 0) {
+    const id = args[showIdx + 1];
+    if (!id || id.startsWith("--")) {
+      console.error(`usage: imps evolve ${name} --show <id>`);
+      process.exit(1);
+    }
+    const file = proposalFilePath(name, id);
+    if (!existsSync(file)) {
+      console.error(`no saved proposal for ${id} (${file})`);
+      process.exit(1);
+    }
+    console.log(readFileSync(file, "utf8"));
+    return;
+  }
+
+  const repoRoot = gitRepoRoot(dirname(sourcePath));
+  if (!repoRoot) {
+    console.error(`imps evolve: ${sourcePath} is not inside a git repository; cannot apply diffs`);
+    process.exit(1);
+  }
+
+  const acceptIdx = args.findIndex((a) => a === "--accept");
+  if (acceptIdx >= 0) {
+    const id = args[acceptIdx + 1];
+    if (!id || id.startsWith("--")) {
+      console.error(`usage: imps evolve ${name} --accept <id>`);
+      process.exit(1);
+    }
+    await acceptProposalCmd(name, id);
+    return;
+  }
+
+  const proposeIdx = args.findIndex((a) => a === "--propose");
+  const target = args[proposeIdx + 1];
+  if (!target || target.startsWith("--")) {
+    console.error(`usage: imps evolve ${name} --propose <id|all>`);
+    process.exit(1);
+  }
+
+  const pending = readEvolutionSuggestions(name).filter((s) => s.state === "pending");
+  const chosen = target === "all" ? pending : pending.filter((s) => s.id === target);
+  if (chosen.length === 0) {
+    console.error(
+      target === "all"
+        ? `${name} has no pending suggestions to propose`
+        : `${name} has no pending suggestion ${target}`,
+    );
+    process.exit(1);
+  }
+
+  const sourceText = readFileSync(sourcePath, "utf8");
+  const sourceRelPath = relative(repoRoot, sourcePath);
+  const suitePath = evalSuitePath(name);
+  const hasSuite = existsSync(suitePath);
+  const suiteRel = hasSuite ? relative(repoRoot, suitePath) : "";
+  // Only tell the model to touch the eval suite in-diff when it lives in the same repo.
+  const evalSuiteRelPath = hasSuite && suiteRel && !suiteRel.startsWith("..") ? suiteRel : undefined;
+
+  for (const suggestion of chosen) {
+    await proposeOne({
+      imp: name,
+      sourcePath,
+      sourceText,
+      repoRoot,
+      sourceRelPath,
+      evalSuitePath: hasSuite ? suitePath : undefined,
+      evalSuiteText: hasSuite ? readFileSync(suitePath, "utf8") : undefined,
+      evalSuiteRelPath,
+      suggestion,
+    });
+  }
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -327,7 +601,18 @@ async function cmdDoctor(): Promise<void> {
   const auth = join(process.env.HOME!, ".codex", "auth.json");
   check(`auth.json at ${auth}`, existsSync(auth), "run codex auth login");
   const names = roster();
-  check(`${names.length} imps in ${IMPS_DIR}`, names.length > 0);
+  const dirs = impScanDirs(IMPS_DIR);
+  check(`${names.length} imps across ${dirs.length} dir(s)`, names.length > 0);
+  for (const dir of dirs) console.log(`      ${dir}`);
+  // Creed #5: an imp without an eval suite makes unproven promises.
+  const evalable = names.filter((n) => n !== "imp-minimal");
+  const uncovered = evalable.filter((n) => !existsSync(evalSuitePath(n)));
+  check(
+    `eval coverage: ${evalable.length - uncovered.length}/${evalable.length} imps have eval suites`,
+    uncovered.length === 0,
+    "guardrails without evals are wishes — add evals/<imp>.ts",
+  );
+  if (uncovered.length > 0) console.log(`      uncovered: ${uncovered.join(", ")}`);
   let warm = 0;
   for (const name of names) if (await isWarm(name)) warm++;
   console.log(`      ${warm} warm imp(s) right now (imps ps for details)`);
@@ -356,7 +641,7 @@ switch (cmd) {
     break;
   case "evolve":
   case "evolutions":
-    cmdEvolve(rest.find((a) => !a.startsWith("--")), rest);
+    await cmdEvolve(rest.find((a) => !a.startsWith("--")), rest);
     break;
   case "init":
     await cmdInit(rest);
@@ -389,6 +674,9 @@ Usage:
   imps stop <name>|--all         stop warm imp(s)
   imps evolve [name]             pending evolution suggestions
   imps init [--dir <root>]       create/update project-local ./imps runtime
+  imps evolve <name> --propose <id|all>   draft a reviewable diff + regression eval
+  imps evolve <name> --show <id>          print a saved proposal
+  imps evolve <name> --accept <id>        apply once evals pass, then review + commit
   imps evolve <name> --applied all
   imps evolve <name> --dismiss <id>
   imps evolve <name> --json

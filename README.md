@@ -1,29 +1,46 @@
 # codex-imps
 
-Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents — **imps** — for common CLI tools. An imp is small, fast, and bound to exactly one tool. Each imp runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Interactive mode is **on by default**; explicit non-interactive runs use a warm background imp for ~2x lower latency.
+Say what you want; an **imp** — a tiny [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agent bound to exactly one CLI tool — does it, tells you the command it ran, and vanishes. No man pages, no flags, no juggling twelve tools.
 
-All imps start with `imp-` so you can type `imp-` and tab-complete to summon the whole roster.
+```console
+$ imp "how many items are in items.json"
+$ jq 'type' items.json && jq 'length' items.json     ← the command imp-jq chose (dimmed)
+items.json contains 4 items. (jq filter used: length) ← the answer
+⚡ imp-jq · warm · 8.3s · 7.3k tokens                  ← dim stats tail on stderr
+```
 
-Where is all this headed? [VISION.md](./VISION.md) — the perfect future we're building toward and the creed every change is measured against.
+You didn't name an imp. `imp` read the prompt, routed to `imp-jq`, and `imp-jq` ran real `jq` before answering — it never guesses from memory. The dim line at the bottom is on every non-interactive run: which imp, warm or cold, wall time, tokens.
+
+The personality is a guardrail, not a vibe. Ask an imp to do something to your source files and least-privilege wins by default:
+
+```console
+$ imp "delete the audio track from intro.mp4 and overwrite it in place"
+   → routes to imp-ffmpeg
+```
+
+What that looks like: `imp-ffmpeg` writes a *new* file (`intro-noaudio.mp4`) and passes `-n` so ffmpeg refuses to clobber the original — its prompt forbids `-y` and overwriting an input, and its `workspace-write` sandbox makes touching anything outside the working directory impossible, not just discouraged. It'll tell you it declined to overwrite and hand you the derived file instead. (Paraphrased — the exact wording is the model's; the never-overwrite rule is not.)
+
+Every imp runs with ~6K input tokens instead of Codex's default ~22K — faster, cheaper, focused. Interactive mode is **on by default**; explicit non-interactive runs (`--run`, piped stdin) use a warm background imp for ~2x lower latency.
+
+All imps start with `imp-`, so type `imp-` and tab-complete to summon the whole roster.
+
+- **[VISION.md](./VISION.md)** — the future we're building toward and the creed every change is measured against.
+- **[docs/ANATOMY.md](docs/ANATOMY.md)** — an annotated walkthrough of a real imp, top to bottom. Read this to build your own.
+- **[docs/ENTERPRISE.md](docs/ENTERPRISE.md)** — the least-privilege, audit-trail, provable-behavior case for a platform or security lead.
 
 ## What is an imp?
 
-An imp is a single executable TypeScript file that wraps a CLI tool with an isolated Codex agent. It:
+An imp is a single executable TypeScript file that wraps one CLI tool with an isolated Codex agent. It:
 
 - Loads **zero** user-space config (no plugins, skills, hooks, memories, or MCP servers)
-- Replaces the ~20K system prompt with a focused, Oracle-tuned prompt optimized for small tool agents
+- Replaces Codex's ~20K system prompt with a focused, Oracle-tuned prompt for small tool agents
 - Disables unused tool schemas (Gmail, Slack, web, imagegen) via feature flags
 - Symlinks only `auth.json` for login — token refreshes propagate automatically
-- Uses `gpt-5.5` with `medium` reasoning effort by default
-- Opens the interactive Codex TUI by default; `--run` streams non-interactive output when you want automation
-- Clean Ctrl+C — kills the agent, its commands, and cleans up temp files immediately
+- Uses `gpt-5.5` at `medium` reasoning effort by default
+- Opens the interactive Codex TUI by default; `--run` streams non-interactive output for automation
+- Cleans up on Ctrl+C — kills the agent, its commands, and temp files immediately
 
-An imp's meaningful behavior lives in that executable source file: base and
-developer instructions, embedded context loaders, command maps, examples,
-workflow rules, error recovery, and response style. Shared runtime code may
-provide mechanics such as Codex isolation, launch flags, warm-server reuse,
-hooks, and backend key transport, but it must not hide imp-specific behavior or
-policy.
+An imp's meaningful behavior lives in that one source file: base and developer instructions, route metadata, command maps, worked examples, workflow rules, error recovery, and response style. Shared runtime code (`lib/`) provides mechanics — isolation, warm-server reuse, the audit transcript — but never hides imp-specific behavior or policy. See [docs/ANATOMY.md](docs/ANATOMY.md) for the full teardown.
 
 ## Install
 
@@ -35,18 +52,20 @@ bun install
 bun link
 ```
 
-This symlinks all imps to `~/.bun/bin/`. Type `imp-` then tab to see them all. You can also run imps directly without linking:
+`bun link` symlinks every imp into `~/.bun/bin/`. Type `imp-` then tab to see them all. You can also run an imp directly without linking:
 
 ```bash
 bun imps/imp-gh
 ```
+
+The package is prepped for `npm i -g codex-imps` (or `bunx`) once published — `package.json` declares the `files`, `bin`, and `exports` needed — but git-clone + `bun link` is the current install and dev path.
 
 ## The imps
 
 | Command | Tool | Description |
 |---------|------|-------------|
 | `imp-cmux` | [cmux](https://github.com/manaflow-ai/cmux) | Terminal workspace automation |
-| `imp-cmux-extensions` | cmux/files | Persistent cmux extension authoring: actions, scripts, receipts, dock controls, and custom sidebars |
+| `imp-cmux-extensions` | cmux/files | Persistent cmux extension authoring: actions, scripts, receipts, dock controls, sidebars |
 | `imp-git` | [git](https://git-scm.com) | Local Git (status, diff, branches, log, stash, commit, safe sync) |
 | `imp-docker` | [docker](https://docs.docker.com/engine/reference/commandline/cli/) | Containers, images, volumes, networks, Compose (guarded lifecycle) |
 | `imp-npm` | [npm](https://docs.npmjs.com/cli) | Node scripts, deps, package metadata, installs, audits |
@@ -58,24 +77,30 @@ bun imps/imp-gh
 | `imp-psql` | [psql](https://www.postgresql.org/docs/current/app-psql.html) | PostgreSQL schema, indexes, query plans, stats, locks (guarded writes) |
 | `imp-gcloud` | [gcloud](https://cloud.google.com/sdk/gcloud) | Google Cloud project/account/resource inventory (guarded mutations) |
 | `imp-gh` | [gh](https://cli.github.com) | GitHub CLI (issues, PRs, releases, actions) |
-| `imp-zsh` | zsh/files | John's `~/.config/zsh` specialist for aliases, functions, wrappers, startup, and tests |
-| `imp-gmail` | [gog](https://github.com/johnlindquist/gog) | Gmail search/read/draft specialist using the gog CLI with no-send defaults |
+| `imp-github-examples` | [gh](https://cli.github.com) | Read-only discovery of public GitHub examples: provenance, license awareness, honest counts — never vendors or writes |
+| `imp-gmail` | [gog](https://github.com/johnlindquist/gog) | Gmail search/read/draft specialist using the gog CLI, no-send defaults |
 | `imp-karabiner` | [goku](https://github.com/yqrashawn/GokuRakuJoTu) | Karabiner-Elements config (karabiner.edn) |
 | `imp-packx` | [packx](https://www.npmjs.com/package/packx) | AI context bundling |
+| `imp-faq` | codex-imps | Companion agent that answers questions about the imps themselves from the loaded repo context |
 | `imp-memory` | [basic-memory](https://github.com/basicmachines-co/basic-memory) | Knowledge management |
 | `imp-bird` | [bird](https://www.npmjs.com/package/bird) | Twitter/X CLI |
 | `imp-browser` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Browser automation (hidden/headless browser it owns) |
 | `imp-browser-automate` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Drives your **live** Chrome over CDP — your real tabs, logins, session |
 | `imp-codex` | [codex](https://www.npmjs.com/package/@openai/codex) | Codex CLI, SDK, app-server, and codex-imps runtime maintenance |
-| `imp-demo` | — | No-tools word and phrase explainer: definitions, rhymes, usage, etymology, and related notes |
+| `imp-hooks` | codex | OpenAI Codex lifecycle hooks: create, audit, manage, and debug (UserPromptSubmit, etc.) |
+| `imp-monkeys` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Five-perspective browser QA swarm: finds state bugs, dead ends, console/network errors |
+| `imp-demo` | — | No-tools word/phrase explainer: definitions, rhymes, usage, etymology |
 | `imp-ffmpeg` | [ffmpeg](https://ffmpeg.org) | Video/audio: probe, convert, trim, scale, extract, GIFs (never overwrites inputs) |
 | `imp-imagemagick` | [magick](https://imagemagick.org) | Images: identify, resize, crop, convert, montage (never overwrites originals) |
 | `imp-yt-dlp` | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video downloads: formats, audio-only, subtitles, playlists (guarded bulk) |
 | `imp-osascript` | osascript | macOS automation: apps, notifications, dialogs, clipboard, Finder (guarded UI control) |
 | `imp-brew` | [brew](https://brew.sh) | Homebrew: search, info, outdated, deps (guarded install/upgrade/cleanup) |
+| `imp-prompt-standard` | — | The canonical prompt-structure reference; teaches and reviews imp prompt bodies (read-only) |
 | `imp-minimal` | — | Bare template for building your own |
 
-Local-only imps run sandboxed to match their promises: `imp-rg` is `read-only`; `imp-jq`, `imp-packx`, `imp-ffmpeg`, and `imp-imagemagick` are `workspace-write`. The sandbox enforces what the prompt claims.
+Sandboxed imps run at the least privilege their promise needs, enforced by the runtime, not just claimed by the prompt: `imp-rg`, `imp-github-examples`, `imp-demo`, and `imp-prompt-standard` are `read-only`; `imp-jq`, `imp-packx`, `imp-ffmpeg`, and `imp-imagemagick` are `workspace-write`. The sandbox makes the dangerous thing impossible, not discouraged.
+
+*Personal and project imps live in their own repos and register as overlays — see [Personal & overlay imps](#personal--overlay-imps).*
 
 ## Usage
 
@@ -85,14 +110,11 @@ Every imp opens the interactive Codex TUI by default. Pass an initial prompt to 
 # Interactive TUI in this terminal
 imp-gh "list my open PRs"
 
-# Non-interactive streaming — shows commands, output, reasoning, and todos
+# Non-interactive streaming — shows commands, output, reasoning, todos, then the stats tail
 imp-gh --run "list my open PRs"
 
-# Quiet non-interactive mode — buffered, only shows the final answer
+# Quiet non-interactive — buffered, only the final answer on stdout
 imp-gh -q "list my open PRs"
-
-# Explicit interactive flag, equivalent to the default
-imp-gh -i
 
 # Help
 imp-gh --help
@@ -110,19 +132,76 @@ curl -s https://api.example.com/things | imp-jq --run "group these by status and
 git log --oneline -30 | imp-git --run "summarize what shipped this week"
 ```
 
-### Route without thinking: `imp`
+### What you see while streaming
 
-`imp` picks the right imp from your prompt by deliberate keyword matching (free, instant, predictable — not a model call). When nothing matches or several imps tie, it lists candidates instead of guessing.
+```
+$ gh pr list --author @me --state all --limit 3    ← command (dimmed)
+#42 fix login bug  OPEN                            ← command output (dimmed)
+#38 add search     MERGED                          ← command output (dimmed)
 
-```bash
-imp "what changed in git since yesterday?"     # -> imp-git
-imp "trim the first 10s off intro.mp4"         # -> imp-ffmpeg
-imp git "what changed?"                        # explicit tool prefix, no guessing
-imp --which "list my PRs"                      # print the routing decision only
-imp -l                                         # list all routes
+Your 2 most recent PRs:                            ← agent's answer (normal, stdout)
+1. #42 fix login bug (open)
+2. #38 add search (merged)
+⚡ imp-gh · warm · 3.2s · 5.8k tokens              ← stats tail (dim, stderr)
 ```
 
-Compound prompts route to **multiple imps, in order**. Strong connectors (`;`, `. `, `then`, `after that`) split the prompt, and when every segment routes cleanly each imp runs with only its own segment:
+Reasoning appears in dim italic; todo items show ○/✓ marks. All verbose output goes to stderr, the final answer to stdout — so `imp-gh --run "list PRs" > prs.txt` captures only the clean answer.
+
+### The stats tail
+
+Every non-interactive run ends with one dim stderr line — `⚡ imp-jq · warm · 8.3s · 7.3k tokens` — so the speed is felt on every call. It's stderr-only, so stdout stays pipe-clean. Suppress it with `IMP_NO_STATS=1`.
+
+### The audit transcript
+
+Every non-interactive run also appends one JSON line to `~/.imp/<imp>/transcripts/YYYY-MM.jsonl` recording what the imp did:
+
+```json
+{"ts":"2026-07-01T17:04:22.118Z","imp":"imp-jq","cwd":"/work","prompt":"how many items are in items.json","transport":"warm","model":"gpt-5.5","durationMs":8312,"status":"completed","commands":[{"command":"jq 'type' items.json && jq 'length' items.json","exitCode":0}],"tokens":7300,"answerChars":41}
+```
+
+It's a greppable, SIEM-shippable trail: every command with its exit code, model, transport, duration, tokens, and answer size. Writes are best-effort — an audit failure never breaks the run it's auditing. Opt out with `IMP_NO_TRANSCRIPT=1`. (`$IMP_HOME` overrides the `~/.imp` root.) See [docs/ENTERPRISE.md](docs/ENTERPRISE.md) for the full schema.
+
+### Non-interactive warm mode
+
+Non-interactive runs use warm mode by default. The first `--run` call to an imp auto-starts a warm background copy of itself and routes through it; later calls reuse it for instant responses. The warm imp holds **one persistent `codex app-server` process** alive, so process spawn, auth/config load, and the WebSocket connection + prewarm are paid **once**, not per prompt.
+
+```bash
+imp-gh --run "list my open PRs"        # first call spawns a warm imp, answers, leaves it warm
+imp-gh --run "list my open issues"     # later calls route through the warm imp — just faster
+imp-gh --no-warm "list my open PRs"    # opt out: cold in-process SDK run, no warm imp
+imp-gh --serve                         # run the warm server in the foreground (for launchd/systemd)
+imp-gh --run --effort minimal "..."    # per-prompt reasoning override
+imp-gh --run --timeout-ms 600000 "..." # per-prompt warm turn timeout (default 300000)
+```
+
+Warm imps **shut down after 30 idle minutes** (the next call transparently respawns one). Tune with `CODEX_IMP_IDLE_MINUTES` (`0` disables). Turn timeout defaults to 300,000 ms (`--timeout-ms` per call, `CODEX_IMP_TURN_TIMEOUT_MS` globally); readiness and RPC-start waits are `CODEX_IMP_READY_TIMEOUT_MS` / `CODEX_IMP_START_TIMEOUT_MS`.
+
+**Edits hot-reload automatically.** Every call fingerprints the imp's source — its executable plus every `lib/*.ts` module it loads — and compares it to what the running warm imp started with. If anything changed, the stale process is stopped and a fresh one spawned *before* your prompt runs. Tweak an imp's prompt, swap its model, or change shared lib code and the **very next prompt** respects the change — no manual restart.
+
+Measured on a previous low-effort default, prompt `"say hi"`, N=8 (same session):
+
+| Mode | Median total | Mean | Range |
+|---|---|---|---|
+| Cold (SDK `codex exec` per request) | 6847 ms | 7042 ms | 4656–9901 |
+| Warm (app-server imp) | 3187 ms | 3108 ms | 2095–3978 |
+
+**~2x faster.** The first protocol frame returns in ~1 ms (connection hot and waiting); the rest is pure model inference on your prompt — the one cost that can't be pre-paid. Run-to-run variance is high (backend scheduling), so collect ≥8 samples before concluding.
+
+## Routing: `imp` and `imps`
+
+### `imp` — summon the right imp
+
+`imp` picks the imp from your prompt by deliberate keyword matching (free, instant, predictable — **not** a model call). The route table isn't hand-maintained: each imp declares its own `route: { pattern, hint, priority? }` in its exported `config`, and the router derives the table by scanning every imp on the machine and caching each route by file mtime. When nothing matches, or several imps tie exactly on score and priority, it lists candidates instead of guessing — on a TTY a tie offers a numbered pick.
+
+```bash
+imp "what changed in git since yesterday?"   # → imp-git
+imp "trim the first 10s off intro.mp4"       # → imp-ffmpeg
+imp git "what changed?"                      # explicit tool prefix, no guessing
+imp --which "list my PRs"                    # print the routing decision only
+imp -l                                       # list all routes (and unrouted, explicit-only imps)
+```
+
+Compound prompts route to **multiple imps, in order**. Strong connectors (`;`, `. `, `then`, `after that`) split the prompt; when every segment routes cleanly each imp runs with only its own segment:
 
 ```bash
 imp "find the TODOs in src; then commit everything"
@@ -130,200 +209,132 @@ imp "find the TODOs in src; then commit everything"
 # [2/2] imp-git: commit everything
 ```
 
-A bare `and` never splits ("open a pane and cd into it" is one cmux task), consecutive segments for the same imp merge back into one call, and if *any* segment is unclear the split is abandoned for whole-prompt routing — splitting can only ever make routing better. A failing step stops the chain. `imp --which` prints the full plan.
+A bare `and` never splits ("open a pane and cd into it" is one cmux task), consecutive segments for the same imp merge back into one call, and if *any* segment is unclear the split is abandoned for whole-prompt routing — splitting can only make routing better. A failing step stops the chain. `imp --which` prints the full plan. Flags after routing (`-q`, `--effort`, `--no-warm`) pass through.
 
-### Manage the fleet: `imps`
+### `imps` — manage the fleet
 
 ```bash
-imps list                    # roster: every imp, warm status, evolution count
+imps list                    # roster: every imp, warm status, pending evolutions, EVALS column
 imps ps                      # warm imps: pid, uptime, idle timeout
 imps stop imp-gh             # stop one warm imp (or: imps stop --all)
 imps evolve                  # which imps have pending evolution suggestions
 imps evolve imp-gh           # review one imp's pending suggestions
-imp evolve imp-gh            # same review command from the user-facing router
-imp-gh evolve                # open that imp's interactive evolution walkthrough
-imp gh evolve                # same walkthrough via the router
-imps evolve imp-gh --applied all
-imps evolve imp-gh --dismiss <id>
-imps doctor                  # env sanity checks + stale socket cleanup
+imps doctor                  # env sanity checks, eval-coverage gate, stale-socket cleanup
 ```
 
-Warm imps **shut themselves down after 30 idle minutes** (the next call transparently respawns one). Tune with `CODEX_IMP_IDLE_MINUTES` (`0` disables).
+Typed `imps "do the thing"` when you meant `imp`? Anything that isn't a fleet command but looks like a prompt forwards to the `imp` router. Near-miss subcommands (`imps lis`) still show usage instead of spending a model turn.
 
-Typed `imps "do the thing"` when you meant `imp`? It forwards: anything that isn't a fleet command but looks like a prompt routes via the `imp` router. Near-miss subcommands (`imps lis`) still show usage instead of spending a model turn.
+## Personal & overlay imps
 
-### Non-Interactive Warm Mode
+The core roster lives in this repo. Personal imps — the ones specific to *your* machine, config, and workflow — belong in **their own repo** (the pattern is `~/dev/codex-imps-personal`), so `git pull` here never touches them and sharing yours is as easy as sharing a dotfile.
 
-Non-interactive runs use warm mode by default. The first `--run` call to any imp auto-starts a warm background copy of itself and routes through it; later `--run` calls reuse that same warm imp for instant responses. The warm imp holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once** on that first call, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
+The router and fleet CLI scan overlay directories in addition to core `imps/`:
+
+- `IMPS_PATH` — colon-separated directories, highest precedence
+- `~/.config/imps/dirs` — one directory per line (`#` comments allowed)
 
 ```bash
-# First call auto-spawns a warm background imp, answers, and leaves it warm
-imp-gh --run "list my open PRs"
-
-# Every later call routes through the warm imp automatically — just faster
-imp-gh --run "list my open issues"
-
-# Opt OUT: force a cold in-process run (SDK exec, no warm imp)
-imp-gh --no-warm "list my open PRs"
-
-# Run the warm imp server in the foreground instead (for a supervisor like launchd/systemd)
-imp-gh --serve
-
-# Per-prompt reasoning override (warm path)
-imp-gh --run --effort minimal "what's my gh auth status"
-
-# Per-prompt warm turn timeout override (default: 5 minutes)
-imp-gh --run --timeout-ms 600000 "audit this repo"
+echo "$HOME/dev/codex-imps-personal/imps" >> ~/.config/imps/dirs
 ```
 
-The auto-started warm imp is detached and persists after the call returns, so it stays warm for your next non-interactive prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use the warm imp. Warm turn timeout defaults to 300,000 ms and can be changed per call with `--timeout-ms` / `--turn-timeout-ms`, or globally with `CODEX_IMP_TURN_TIMEOUT_MS`. Warm startup readiness defaults to 120,000 ms via `CODEX_IMP_READY_TIMEOUT_MS`; app-server RPC/start waits default to 180,000 ms via `CODEX_IMP_START_TIMEOUT_MS`.
+An overlay imp is an ordinary imp file that imports the runtime from the installed package:
 
-**Edits hot-reload automatically.** A warm imp holds your imp's code in memory, so editing it would normally have no effect until you killed the process by hand. Instead, every call fingerprints the imp's source — the executable (its instructions, model, env) plus every `lib/*.ts` module it loads — and compares it to what the running warm imp was started with. If anything changed, the stale process is stopped and a fresh one is spawned **before** your prompt runs. So you can tweak an imp's internal prompt, swap the model, or change shared lib code and the **very next prompt respects the change** — no manual restart, no flag.
+```ts
+#!/usr/bin/env bun
+import { runImp, type ImpConfig } from "codex-imps/lib/isolated.ts";
 
-### Evolution suggestions
+export const config: ImpConfig = {
+  name: "imp-mytool",
+  route: { pattern: String.raw`\b(mytool|mt)\b`, hint: "my private tool" },
+  baseInstructions: "You are imp-mytool …",
+  developerInstructions: `…`,
+};
 
-Imps no longer rewrite their own prompts from command failures. A failed command is usually a Codex/runtime/tooling issue, not proof that the imp should mutate itself.
-
-Instead, each non-interactive invocation records a compact, redacted session log under `~/.imp/sessions/`. If the wrapper sees a bad session boundary, such as a timeout, interrupted/failed turn, or no final answer, it appends a reviewable suggestion to `~/.imp/<imp-name>.evolutions.jsonl`. Suggestions are transparent and inert until reviewed:
-
-```bash
-imps evolve                  # list imps with pending suggestions
-imps evolve imp-gh           # inspect pending suggestions for one imp
-imp evolve imp-gh            # same review command from the user-facing router
-imp-gh evolve                # open a maintainer walkthrough for that imp
-imp gh evolve                # same walkthrough via the router
-imps evolve imp-gh --applied all
-imps evolve imp-gh --dismiss <id>
+if (import.meta.main) runImp(config);
 ```
 
-To intentionally mark a turn for evolution review, prefix the prompt with
-`+reason` on the first line. A bundled `UserPromptSubmit` hook saves that
-feedback as review evidence and tells Codex to treat the first line as
-maintainer feedback rather than task text:
+It then shows up in `imp -l`, `imps list`, warm/stop/evolve — exactly like a core imp. Earlier scan dirs win name collisions.
+
+## Evolution
+
+Imps don't rewrite their own prompts from command failures — a failed command is usually a runtime or tooling issue, not proof the imp should mutate. Evolution is **reviewable and gated on proof** instead. Two halves: capturing signal, and closing the loop.
+
+### Capturing signal
+
+Each non-interactive run records a compact, redacted session trace. If the wrapper sees a bad boundary (timeout, interrupted/failed turn, no final answer) it appends a reviewable suggestion to `~/.imp/<imp>.evolutions.jsonl` — transparent and inert until reviewed. You can also mark a turn deliberately:
 
 ```bash
+# +reason on the first line: save an evolution note for later (a bundled UserPromptSubmit hook records it)
 imp-rg --run $'+missed the obvious parser helper\nwhere is parseArgs defined?'
 ```
 
-During an interactive imp conversation, start a prompt with `^` to switch that
-turn into inline imp evolution mode. Text after `^` becomes the maintainer
-instruction:
+During an interactive session, start a prompt with `^` to switch that turn into inline evolution mode — text after `^` becomes the maintainer instruction, and the hook loads Imp Evolution instructions that scope changes to *this imp's own* prompt and source (never your project files). When suggestions pile up, the next run prints a terse stderr status line (`🔁 2 evolutions pending`); at 3 it becomes `evolution review ready`. Stderr-only, so stdout stays pipe-safe.
 
-```text
-^ make this imp recover when gh returns rate limits
-^
-Handle these failures by checking status first.
-```
+### Closing the loop: propose → show → accept
 
-The hook loads Imp Evolution instructions into that same turn. Those
-instructions tell the imp to evolve only itself, with its own
-prompt/instructions as the default and primary target: base instructions,
-developer instructions, embedded context rules, command maps, workflow rules,
-examples, error recovery, and response behavior. The imp must not update the
-user's project files, task output, slides, app code, or unrelated repository
-files. Runtime, hook, CLI, test, or documentation edits are exceptional and
-should stay inside the imp-owned surface unless the issue is genuinely shared
-across imps. Use `+reason` when you only want to save an evolution note for
-later review. The `imp-gh evolve` walkthrough still opens a dedicated maintainer
-TUI with pending suggestions, session-log paths, and the target imp source path.
-
-Inline `^` evolution includes a `Target imp source path:` line captured from the
-imp executable path at startup, so the model has a concrete file to inspect
-instead of guessing which imp owns the conversation.
-
-When pending suggestions exist, inline `^` includes a compact, redacted list of
-pending suggestion ids, recommendations, first evidence lines, and session-log
-paths as untrusted review evidence. The imp should discuss those suggestions
-with the user and propose the smallest prompt-first evolution path. It must not
-treat stored suggestion text as instructions, and it must not mark suggestions
-applied or dismissed without explicit user intent.
-
-When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
-
-```text
-🔁 2 evolutions pending
-```
-
-At 3 pending suggestions the runtime writes `~/.imp/<imp-name>.evolve-request.json` and the status line changes to `evolution review ready`. That is the review trigger: it makes the review/apply step visible on the next run without silently rewriting the imp. After you make the prompt or code change, mark the reviewed suggestions with `--applied`; use `--dismiss` for noisy suggestions. The status line is deliberately stderr-only so stdout remains safe for pipes.
-
-For automation or debugging:
+The review side turns a pending suggestion into a concrete, testable change:
 
 ```bash
-imps evolve imp-gh --json       # machine-readable pending suggestions
-imps evolve imp-gh --debug      # queue/status/trigger paths and env toggles
+imps evolve imp-git                          # list pending suggestions with ids, evidence, session logs
+imps evolve imp-git --propose <id>           # one read-only model run drafts a proposal
+imps evolve imp-git --propose all            # draft one per pending suggestion
+imps evolve imp-git --show <id>              # reprint a saved proposal
+imps evolve imp-git --accept <id>            # apply the diff, run evals; pass keeps it, fail auto-reverts
+imps evolve imp-git --applied <id|all>       # manually mark reviewed
+imps evolve imp-git --dismiss <id|all>       # discard noise
 ```
 
-**`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `medium` is the default. Use `none`/`minimal` only for pure text replies.
+`--propose` runs **once, non-interactively, read-only** and writes a reviewable proposal to `~/.imp/<imp>/proposals/<id>.md` — a rationale, a `git apply`-compatible diff against the imp's own source, and (when the imp has an eval suite) a regression `EvalCase` that would fail before the change and pass after. `--accept` is gated on proof: it applies the diff in the imp's git repo, runs `bun evals.ts <imp>` for real (paying model turns), and keeps the change **only if the evals pass** — on failure the diff is reverted and the suggestion stays pending. Nothing is committed for you; accept prints the `git diff` to review and commit yourself. If an imp has no eval suite, accept applies the change but flags it `SHIPS UNPROVEN` and tells you to write one.
 
-Measured on the previous `gpt-5.3-codex-spark` low-effort default, prompt `"say hi"`, N=8 each (same session):
+## Evals & the trust ledger
 
-| Mode | Median total | Mean | Range |
-|---|---|---|---|
-| Cold (SDK `codex exec` per request) | 6847 ms | 7042 ms | 4656–9901 |
-| Warm (app-server imp) | 3187 ms | 3108 ms | 2095–3978 |
-
-**~2x faster.** The first protocol frame returns in ~1 ms (the connection is hot and waiting); the remaining seconds are pure model inference on your prompt — the one cost that can't be pre-paid, since the model hasn't seen the prompt until you send it. Run-to-run variance is high (backend scheduling), so collect ≥8 samples before drawing conclusions.
-
-Benchmark it yourself:
+`bun test` proves the imps *load*; **evals prove they *behave*.** Each suite in `evals/` runs real prompts against a hermetic temp-dir fixture and asserts on the answer **and** the resulting filesystem — e.g. `imp-jq` must create `users.csv` and must **not** touch `users.json`; `imp-git` must commit only the named file and leave unrelated dirty files alone. One model turn per case.
 
 ```bash
-bun bench.ts imp-gh "say hi" --runs 8            # cold
-imp-gh --serve &                                 # warm
-bun bench.ts imp-gh "say hi" --runs 8 --warm
+bun run evals                                 # all suites
+bun evals.ts imp-jq                            # one suite
+bun evals.ts imp-git --filter commit --keep    # one case, keep the sandbox for post-mortem
 ```
 
-Want to see the raw warm-floor breakdown (setup cost, first-frame vs first-content-token, fresh-thread vs same-thread)? Run `bun probe-appserver.ts`.
-
-### What you see while streaming
+Every run records per-suite results to `~/.local/share/codex-imps/eval-results.json` — the **trust ledger**. `imps list` surfaces it as an `EVALS` column:
 
 ```
-$ gh pr list --author @me --state all --limit 3    ← command (dimmed)
-#42 fix login bug  OPEN                            ← command output (dimmed)
-#38 add search     MERGED                          ← command output (dimmed)
-                                                   
-Your 2 most recent PRs:                            ← agent's answer (normal)
-1. #42 fix login bug (open)
-2. #38 add search (merged)
+IMP                WARM   EVOLUTIONS   EVALS
+imp-git            -      -            12 cases ✓ 2026-07-01
+imp-jq             yes    -            3 cases ✓ 2026-07-01
+imp-docker         -      2            unproven
+imp-minimal        -      -            -
 ```
 
-Reasoning text appears in dim italic. Todo items show with ○/✓ marks. All verbose output goes to stderr, final answer to stdout — so `imp-gh --run "list PRs" > prs.txt` captures only the clean answer.
+`12 cases ✓ 2026-07-01` = a full suite passed clean on that date; `unproven` = a suite exists but hasn't had a clean full run; `-` = no suite. `imps doctor` **fails** when imps lack eval suites — a guardrail without an eval is a wish, not a guarantee. Current suites: `imp-git`, `imp-jq`, `imp-rg`, `imp-ffmpeg`, `imp-imagemagick`, `imp-npm`. The same ledger gates `imps evolve --accept`.
 
 ## Create your own
 
-### Option A: Interactive generator
+Read [docs/ANATOMY.md](docs/ANATOMY.md) first — it walks a real imp end to end. Then:
 
 ```bash
-bun run create
-# or after global install:
-imp-create
-```
+# Option A: interactive generator (scaffolds the export-config + route + a starter eval suite)
+bun run create        # or, after install: imp-create
 
-### Option B: Copy-paste prompt
-
-See [docs/PROMPT.md](docs/PROMPT.md) — paste it into any AI agent with your tool's `--help` output.
-
-### Option C: Copy the template
-
-```bash
-cp imps/imp-minimal imps/imp-my-tool
-chmod +x imps/imp-my-tool
-# Edit and customize
+# Option B: copy-paste prompt — paste docs/PROMPT.md into any AI agent with your tool's --help
+# Option C: copy the template
+cp imps/imp-minimal imps/imp-my-tool && chmod +x imps/imp-my-tool
 ```
 
 ## Prompt design
 
-Prompts are optimized for `gpt-5.5` at `medium` reasoning effort. Key patterns:
+Prompts are optimized for `gpt-5.5` at `medium` reasoning effort. Key patterns (the full teardown is in [docs/ANATOMY.md](docs/ANATOMY.md)):
 
 - **Operating rule first**: "Run [tool] via exec_command before any final answer. Do not answer from memory."
-- **Command maps**: Explicit IF/THEN mappings instead of vague instructions. Low-reasoning models need literal decision shortcuts.
-- **Worked examples**: 3-5 few-shot examples per imp (user request → numbered exact command sequence → report step). Low-reasoning models imitate examples far better than they follow abstract rules.
-- **Error recovery maps**: exact error text → exact next command, so a failed command never dead-ends the turn.
-- **Consistent structure**: Every imp follows the same section order: Mission → Tool-output trust boundary → Operating rule → Command map → Workflow → Mutation policy → Worked examples → Error recovery → Command rules → Output.
-- **No --help dumps**: Curated command maps are more effective than raw CLI reference for focused tool agents.
+- **Command maps**: explicit IF/THEN keyword→command mappings — a small model needs literal decision shortcuts, not vague guidance.
+- **Worked examples**: 3–5 few-shot examples (request → numbered exact commands → report). Small models imitate examples far better than they follow abstract rules.
+- **Error-recovery maps**: exact error text → exact next command, so a failed command never dead-ends a turn.
+- **Consistent structure**: every imp follows the same section order — Mission → Tool-output trust boundary → Operating rule → Command map → Workflow → Mutation policy → Worked examples → Error recovery → Command rules → Output.
+- **No `--help` dumps**: a curated command map beats raw CLI reference for a focused agent.
 
 ## How isolation works
 
-Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`, filtered project trust config, and imp-owned TUI defaults such as `[tui] show_tooltips = false`. Combined with feature flags, this strips ~16K tokens of overhead:
+Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`, filtered project-trust config, and imp-owned TUI defaults. Combined with feature flags, this strips ~16K tokens of overhead:
 
 | What's disabled | Tokens saved | Config key |
 |---|---|---|
@@ -331,20 +342,10 @@ Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`, fil
 | Image generation | ~1,000 | `features.image_generation = false` |
 | Web search | ~1,000 | `web_search = "disabled"` |
 | Tool discovery | ~500 | `features.tool_search = false` |
-| Model/base instructions | ~5,000 | CLI/TOML: `instructions` or `model_instructions_file`; SDK typed config: `base_instructions` |
+| Model/base instructions | ~5,000 | SDK typed config: `base_instructions` |
 | Skills, plugins, hooks, memories | varies | Feature flags |
 
 See [docs/ISOLATION.md](docs/ISOLATION.md) for the full research with source line references.
-
-## Evals (model-paid behavioral checks)
-
-`bun test` proves the imps *load*; evals prove they *behave*. Each suite in `evals/` runs real prompts against a hermetic temp-dir fixture and asserts on the answer **and** the resulting filesystem (e.g. imp-jq must create `users.csv` and must NOT touch `users.json`; imp-git must commit only the named file and leave unrelated dirty files alone). One model turn per case — run after editing an imp's prompt; hot-reload means the very next eval exercises the change.
-
-```bash
-bun run evals               # all suites
-bun evals.ts imp-jq         # one suite
-bun evals.ts imp-git --filter commit --keep   # one case, keep sandbox for post-mortem
-```
 
 ## Tests
 
@@ -354,7 +355,7 @@ Fast, model-free smoke tests guard against arg-parsing and load regressions:
 bun test
 ```
 
-`test/parseargs.test.ts` exhaustively checks flag/prompt parsing (the spot a past `--effort` bug dropped the first prompt word). `test/cli-smoke.test.ts` loads every imp binary, checks `--help`/no-args, and confirms a real prompt survives parsing without paying a model turn.
+`test/parseargs.test.ts` exhaustively checks flag/prompt parsing; `test/cli-smoke.test.ts` loads every imp binary, checks `--help`/no-args, and confirms a real prompt survives parsing without paying a model turn.
 
 **Push gate:** enable the pre-push hook once per clone so failing tests block a push:
 
@@ -368,4 +369,4 @@ git config core.hooksPath .githooks
 
 - [Bun](https://bun.sh) v1.0+
 - [Codex CLI](https://www.npmjs.com/package/@openai/codex) (authenticated — `codex auth login`)
-- The CLI tool each imp wraps (e.g. `gh`, `bird`, `cmux`)
+- The CLI tool each imp wraps (e.g. `gh`, `jq`, `ffmpeg`)
